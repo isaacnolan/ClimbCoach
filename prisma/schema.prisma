@@ -1,53 +1,77 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  workouts  Workout[]
-  progress  Progress[]
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Workout {
   id          String     @id @default(cuid())
+  userId      String? // optional, no relation
   name        String
   description String?
   createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  userId      String
-  user        User       @relation(fields: [userId], references: [id])
+  scheduledDate DateTime?  
   exercises   Exercise[]
+  Progress    Progress[]
+}
+
+model User {
+  id       String     @id
+  email    String     @unique
+  name     String?
+  // NO: workouts Workout[]   ← remove if you had this
+  Progress Progress[]
 }
 
 model Exercise {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
+  workoutId   String
+  workout     Workout       @relation(fields: [workoutId], references: [id], onDelete: Cascade)
   name        String
-  description String?
   sets        Int
   reps        Int?
-  duration    Int?     // in seconds
-  rest        Int?     // rest time in seconds
-  workoutId   String
-  workout     Workout  @relation(fields: [workoutId], references: [id])
+  duration    Int?
+  rest        Int?
+  orderIdx    Int?
+  ProgressSet ProgressSet[]
+
+  @@index([workoutId])
 }
 
 model Progress {
-  id          String   @id @default(cuid())
-  date        DateTime @default(now())
-  maxGrade    String?  // e.g., "V5" or "5.12a"
-  notes       String?
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-} 
+  id        String        @id @default(cuid())
+  userId    String
+  workoutId String
+  user      User          @relation(fields: [userId], references: [id])
+  workout   Workout       @relation(fields: [workoutId], references: [id])
+  date      DateTime      @default(now())
+  notes     String?
+  performed Json?
+  sets      ProgressSet[]
+
+  @@index([userId])
+  @@index([workoutId, date])
+}
+
+model ProgressSet {
+  id         String   @id @default(cuid())
+  progressId String
+  progress   Progress @relation(fields: [progressId], references: [id], onDelete: Cascade)
+  exerciseId String
+  exercise   Exercise @relation(fields: [exerciseId], references: [id])
+  setIndex   Int
+  weight     Float?
+  reps       Int?
+  duration   Int?
+  rpe        Float?
+  notes      String?
+
+  @@unique([progressId, exerciseId, setIndex])
+  @@index([progressId])
+  @@index([exerciseId])
+}
