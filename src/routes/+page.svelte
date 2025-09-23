@@ -3,6 +3,7 @@
   import { getWorkouts } from '$lib/data/workouts';
   import WorkoutForm from '$lib/components/WorkoutForm.svelte';
   import PerformanceAnalyzer from '$lib/components/PerformanceAnalyzer.svelte';
+  import DashboardCalendar from '../pages/DashboardCalendar.svelte';
 
   // No filtering so everything shows
   const USER_ID: string | undefined = undefined;
@@ -85,31 +86,7 @@
 
     {:else if currentTab === 'dashboard'}
       <section class="dashboard">
-        <div class="card">
-          <h2>Today's Training</h2>
-          {#if workouts.length > 0}
-            <div class="workout-list">
-              {#each workouts.slice(0, 2) as workout}
-                <div class="workout-item">
-                  <h3>{workout.name}</h3>
-                  <p>{workout.description || 'No description'}</p>
-                  <div class="exercise-count">{workout.exercises?.length ?? 0} exercises</div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div class="empty-state">
-              <p>No workouts created yet</p>
-              <p class="empty-action">Create your first workout to get started!</p>
-            </div>
-          {/if}
-          <button on:click={() => (showWorkoutForm = true)}>Create New Workout</button>
-        </div>
-
-        <div class="card">
-          <h2>Recent Progress</h2>
-          <p>Track your climbing improvements</p>
-        </div>
+        <DashboardCalendar />
       </section>
 
     {:else if currentTab === 'workouts'}
