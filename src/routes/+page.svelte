@@ -4,6 +4,7 @@
   import WorkoutForm from '$lib/components/WorkoutForm.svelte';
   import PerformanceAnalyzer from '$lib/components/PerformanceAnalyzer.svelte';
   import DashboardCalendar from '../pages/DashboardCalendar.svelte';
+  import ProgressChart from '../pages/ProgressChart.svelte';
 
   // No filtering so everything shows
   const USER_ID: string | undefined = undefined;
@@ -135,6 +136,7 @@
     {:else}
       <section class="progress">
         <h2>Your Progress</h2>
+        <ProgressChart />
         <div class="progress-stats">
           <div class="stat"><h3>Max Grade</h3><p>V5</p></div>
           <div class="stat"><h3>Training Days</h3><p>12/30</p></div>
