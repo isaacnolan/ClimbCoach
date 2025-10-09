@@ -12,6 +12,7 @@ export async function createWorkout(data: {
   name: string;
   description?: string;
   userId?: string | null; // optional now
+  scheduledDate?: Date;
   exercises: {
     name: string;
     description?: string;
@@ -19,6 +20,7 @@ export async function createWorkout(data: {
     reps?: number;
     duration?: number;
     rest?: number;
+    date?: Date;
   }[];
 }) {
   try {
@@ -27,6 +29,7 @@ export async function createWorkout(data: {
         name: data.name,
         description: data.description,
         userId: data.userId ?? null,
+        scheduledDate: data.scheduledDate,
         exercises: { create: data.exercises },
       },
       include: { exercises: true },

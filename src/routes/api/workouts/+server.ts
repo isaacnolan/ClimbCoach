@@ -11,10 +11,21 @@ export const POST: RequestHandler = async ({ request }) => {
       return new Response(JSON.stringify({ error: 'name is required' }), { status: 400 });
     }
 
+    // Parse scheduledDate if provided
+    let scheduledDate: Date | undefined = undefined;
+    if (b.scheduledDate) {
+      scheduledDate = new Date(b.scheduledDate);
+      // Validate the date
+      if (isNaN(scheduledDate.getTime())) {
+        return new Response(JSON.stringify({ error: 'Invalid scheduledDate format' }), { status: 400 });
+      }
+    }
+
     const created = await dbCreate({
       name: b.name.trim(),
       description: b.description ?? undefined,
       userId: b.userId ?? null, // optional
+      scheduledDate: scheduledDate,
       exercises: (b.exercises ?? []).map((e: any) => ({
         name: e.name,
         sets: Number(e.sets) || 0,
