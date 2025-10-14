@@ -16,12 +16,13 @@ let daysInMonth = new Date(year, month + 1, 0).getDate();
 let firstDay = new Date(year, month, 1).getDay();
 let calendar: (number|null)[][] = [];
 
-let selectedEvent: WorkoutEvent | null = null;
-let showModal = false;
-let isLoading = true;
-let error: string | null = null;
+const monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'
+];
 
-onMount(async () => {
+function updateCalendar() {
+  daysInMonth = new Date(year, month + 1, 0).getDate();
+  firstDay = new Date(year, month, 1).getDay();
   calendar = [];
   let day = 1;
   for (let i = 0; i < 6; i++) {
@@ -36,21 +37,49 @@ onMount(async () => {
     }
     calendar.push(week);
   }
+}
 
+function prevMonth() {
+  if (month === 0) {
+    month = 11;
+    year--;
+  } else {
+    month--;
+  }
+  updateCalendar();
+}
+
+function nextMonth() {
+  if (month === 11) {
+    month = 0;
+    year++;
+  } else {
+    month++;
+  }
+  updateCalendar();
+}
+
+let selectedEvent: WorkoutEvent | null = null;
+let showModal = false;
+let isLoading = true;
+let error: string | null = null;
+
+onMount(async () => {
+  updateCalendar();
   try {
     isLoading = true;
     error = null;
     const workouts = await getWorkouts();
     // Map workouts to calendar events (use scheduledDate if available, else createdAt)
     events = workouts
-  .filter((w: any) => w.scheduledDate || w.createdAt)
-    .map((w: any) => ({
-      id: w.id,
-      date: (w.scheduledDate ? w.scheduledDate : w.createdAt).slice(0, 10),
-      title: w.name,
-      description: w.description || '',
-      exercises: w.exercises || [],
-    }));
+      .filter((w: any) => w.scheduledDate || w.createdAt)
+      .map((w: any) => ({
+        id: w.id,
+        date: (w.scheduledDate ? w.scheduledDate : w.createdAt).slice(0, 10),
+        title: w.name,
+        description: w.description || '',
+        exercises: w.exercises || [],
+      }));
   } catch (err) {
     error = 'Failed to load workouts.';
   } finally {
@@ -59,8 +88,8 @@ onMount(async () => {
 });
 
 function getEvent(day: number) {
-  const date = `${year}-09-${String(day).padStart(2, '0')}`;
-  return events.find(e => e.date.endsWith(date));
+  const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return events.find(e => e.date === date);
 }
 
 function handleEventClick(event) {
@@ -222,7 +251,11 @@ function closeModal() {
 </style>
 
 <div class="calendar-container">
-  <div class="header">September 2025</div>
+  <div class="header" style="display: flex; align-items: center; justify-content: center; gap: 1.5rem;">
+    <button style="background: #e3f0ff; color: #3182ce; border: none; border-radius: 8px; padding: 0.4rem 1rem; font-size: 1.1rem; cursor: pointer; font-weight: 500;" on:click={prevMonth}>&lt;</button>
+    <span>{monthNames[month]} {year}</span>
+    <button style="background: #e3f0ff; color: #3182ce; border: none; border-radius: 8px; padding: 0.4rem 1rem; font-size: 1.1rem; cursor: pointer; font-weight: 500;" on:click={nextMonth}>&gt;</button>
+  </div>
   <div class="weekdays">
     <div>Sun</div>
     <div>Mon</div>
@@ -267,10 +300,6 @@ function closeModal() {
           {#if selectedEvent.description}
             <p class="modal-desc">{selectedEvent.description}</p>
           {/if}
-          <div class="modal-date-row">
-            <span class="modal-date-label">Date:</span>
-            <span class="modal-date-value">{selectedEvent.date}</span>
-          </div>
           {#if selectedEvent.exercises && selectedEvent.exercises.length > 0}
             <div>
               <h3 style="margin: 0.5rem 0 0.2rem 0; font-size: 1.1rem; color: #3182ce;">Exercises</h3>
@@ -295,6 +324,10 @@ function closeModal() {
               </ul>
             </div>
           {/if}
+          <div class="modal-date-row" style="margin-top: 1.2rem; justify-content: left; align-self: center; width: 100%;">
+            <span class="modal-date-label">Date:</span>
+            <span class="modal-date-value">{selectedEvent.date}</span>
+          </div>
           <button class="modal-close" on:click={closeModal}>Close</button>
         </div>
       </div>
