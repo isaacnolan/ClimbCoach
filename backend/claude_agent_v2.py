@@ -10,6 +10,7 @@ import os
 import pandas as pd
 from typing import List, Dict
 import json
+import requests
 
 load_dotenv()
 
@@ -17,12 +18,13 @@ load_dotenv()
 openai_api_key = os.getenv('OPENAI_API_KEY')
 
 class ClimbingCoachSystem:
-    def __init__(self, kaggle_gym_path, kaggle_climb_path, google_sheets_url):
+    def __init__(self, kaggle_gym_path, kaggle_climb_path, google_sheets_url, api_base_url: str = "http://localhost:5173"):
         self.llm = OpenAI(temperature=0.7)
         self.embeddings = OpenAIEmbeddings()
         self.kaggle_gym_path = kaggle_gym_path
         self.kaggle_climb_path = kaggle_climb_path
         self.google_sheets_url = google_sheets_url
+        self.api_base_url = api_base_url
         self.setup_knowledge_bases()
         self.setup_agents()
     
@@ -385,6 +387,102 @@ class ClimbingCoachSystem:
         print(f"Created injury prevention vectorstore with {len(injury_docs)} documents")
         return Chroma.from_documents(injury_docs, self.embeddings)
     
+    def create_workout_in_db(self, workout_request: str) -> str:
+        """
+        Parse a user request for creating a workout and POST it to the database.
+        
+        Args:
+            workout_request: Natural language description of the workout to create
+            
+        Returns:
+            JSON string with the created workout or error message
+        """
+        try:
+            # Use LLM to parse the workout request into structured data
+            parse_prompt = f"""
+            Parse the following workout request into a structured JSON format.
+            The JSON should have this structure:
+            {{
+                "name": "workout name",
+                "description": "brief description",
+                "userId": null,
+                "scheduledDate": "ISO 8601 date string (YYYY-MM-DDTHH:MM:SS.sssZ) or null if not specified",
+                "exercises": [
+                    {{
+                        "name": "exercise name",
+                        "sets": number,
+                        "reps": number or null,
+                        "duration": duration in seconds or null,
+                        "rest": rest time in seconds or null
+                    }}
+                ]
+            }}
+            
+            Date parsing rules:
+            - If a specific date is mentioned (e.g., "October 10, 2025", "tomorrow", "next Monday"), convert it to ISO 8601 format
+            - If no date is mentioned, set scheduledDate to null
+            - Today's date is October 10, 2025
+            - Use UTC timezone for the date
+            
+            Workout request: {workout_request}
+            
+            Return ONLY the JSON, no other text.
+            """
+            
+            # Get structured workout data from LLM
+            workout_json_str = self.llm(parse_prompt)
+            
+            # Clean up the response to ensure it's valid JSON
+            workout_json_str = workout_json_str.strip()
+            if workout_json_str.startswith("```json"):
+                workout_json_str = workout_json_str[7:]
+            if workout_json_str.startswith("```"):
+                workout_json_str = workout_json_str[3:]
+            if workout_json_str.endswith("```"):
+                workout_json_str = workout_json_str[:-3]
+            workout_json_str = workout_json_str.strip()
+            
+            workout_data = json.loads(workout_json_str)
+            
+            # POST to the API endpoint
+            response = requests.post(
+                f"{self.api_base_url}/api/workouts",
+                json=workout_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 201:
+                created_workout = response.json()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Workout '{created_workout['name']}' created successfully!",
+                    "workout": created_workout
+                }, indent=2)
+            else:
+                error_data = response.json()
+                return json.dumps({
+                    "success": False,
+                    "error": error_data.get("error", "Failed to create workout"),
+                    "status_code": response.status_code
+                }, indent=2)
+                
+        except json.JSONDecodeError as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Failed to parse workout data: {str(e)}",
+                "raw_response": workout_json_str if 'workout_json_str' in locals() else None
+            }, indent=2)
+        except requests.RequestException as e:
+            return json.dumps({
+                "success": False,
+                "error": f"API request failed: {str(e)}"
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Unexpected error: {str(e)}"
+            }, indent=2)
+    
     def setup_agents(self):
         """Create specialized agents for different coaching aspects"""
         
@@ -449,6 +547,14 @@ class ClimbingCoachSystem:
                 name="Route_Analysis",
                 func=route_qa.run,
                 description="Analyze routes and provide climbing strategy advice based on route database"
+            ),
+            Tool(
+                name="Create_Workout",
+                func=self.create_workout_in_db,
+                description="""Creates and saves a workout to the database. Use this when the user wants to CREATE and SAVE a workout.
+                Input: A clear description of the workout including workout name, exercises with sets/reps/duration, and optionally a scheduled date.
+                Example input: 'Create a workout called "Finger Strength" scheduled for October 15, 2025 with hangboard training: 5 sets of 10 second hangs with 3 minute rest'
+                The tool will parse the request and save it to the database, returning confirmation."""
             )
         ]
         
@@ -465,21 +571,21 @@ class ClimbingCoachSystem:
         """Main interface for creating training plans"""
         
         enhanced_query = f"""
-        As an expert climbing coach with access to comprehensive datasets including:
-        - 2900+ gym exercises from fitness database
-        - Climbing route data and grade analysis from 8a.nu
-        - Climbing-specific training protocols
+        As an expert climbing coach with access to comprehensive datasets and tools, respond to: {user_query}
         
-        Create a detailed, data-driven training plan for: {user_query}
+        Your available tools:
+        - Create_Workout: Creates and saves workouts to database (use when user wants to create/save a workout)
+        - Exercise_Prescription: Recommends exercises from 2900+ exercise database
+        - Progression_Planning: Plans grade progressions using climbing data
+        - Technique_Coaching: Provides technique advice from training data
+        - Injury_Prevention: Provides safety and injury prevention advice
+        - Route_Analysis: Analyzes routes and provides climbing strategies
         
-        Use the available tools to gather relevant information and provide:
-        1. Specific exercises with sets/reps from the database
-        2. Grade progression insights based on climbing data
-        3. Technique recommendations from training data
-        4. Injury prevention strategies from exercise database
-        5. Route analysis and climbing strategies from route data
+        IMPORTANT: When using Create_Workout, pass the entire workout description as input.
+        Example: If user says "Create a workout called X with exercises Y", 
+        use Create_Workout with input: "Create a workout called X with exercises Y"
         
-        Make recommendations specific and actionable based on the actual data available.
+        Analyze the user's request and use appropriate tools to provide a comprehensive, data-driven response.
         """
         
         return self.coordinator.run(enhanced_query)
@@ -527,10 +633,8 @@ if __name__ == "__main__":
     
     # Example queries
     queries = [
+        "Create a workout called 'V5 Power Training' scheduled for October 15, 2025 with campus board ladders: 4 sets of 6 rungs with 3 minute rest, and hangboard repeaters: 6 sets of 7 seconds with 3 seconds off",
         "Create a 6-week plan for a V3 climber aiming to reach V5",
-        "Help me improve my finger strength using exercises from the database", 
-        "What does the climbing data tell us about grade progression from V2 to V4?",
-        "Design a weekly training schedule based on the available exercise data"
     ]
     
     for query in queries:
