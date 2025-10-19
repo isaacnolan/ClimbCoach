@@ -1,44 +1,25 @@
-// src/routes/api/workouts/+server.ts
 import type { RequestHandler } from './$types';
-import { createWorkout as dbCreate, getWorkouts as dbList } from '$lib/server/db';
+import { prisma } from '$lib/server/db';
 
-// Create workout
-export const POST: RequestHandler = async ({ request }) => {
-  try {
-    const b = await request.json();
-
-    if (!b?.name?.trim()) {
-      return new Response(JSON.stringify({ error: 'name is required' }), { status: 400 });
-    }
-
-    const created = await dbCreate({
-      name: b.name.trim(),
-      description: b.description ?? undefined,
-      userId: b.userId ?? null, // optional
-      exercises: (b.exercises ?? []).map((e: any) => ({
-        name: e.name,
-        sets: Number(e.sets) || 0,
-        reps: e.reps ?? undefined,
-        duration: e.duration ?? undefined,
-        rest: e.rest ?? undefined,
-      })),
-    });
-
-    return new Response(JSON.stringify(created), { status: 201 });
-  } catch (err: any) {
-    console.error('POST /api/workouts failed:', err);
-    return new Response(JSON.stringify({ error: err?.message || 'Server error' }), { status: 500 });
-  }
+export const GET: RequestHandler = async ({ url }) => {
+  const lite = url.searchParams.get('lite') === '1';
+  const data = await prisma.workout.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: lite ? { id: true, name: true, description: true } : undefined
+  });
+  return new Response(JSON.stringify(data), { status: 200 });
 };
 
-// List workouts (optionally by userId; we won’t filter on UI right now)
-export const GET: RequestHandler = async ({ url }) => {
+export const POST: RequestHandler = async ({ request }) => {
   try {
-    const userId = url.searchParams.get('userId') || undefined;
-    const workouts = await dbList(userId || undefined);
-    return new Response(JSON.stringify(workouts), { status: 200 });
-  } catch (err: any) {
-    console.error('GET /api/workouts failed:', err);
-    return new Response(JSON.stringify({ error: err?.message || 'Server error' }), { status: 500 });
+    const body = await request.json();
+    if (!body?.name) return new Response(JSON.stringify({ error: 'name required' }), { status: 400 });
+
+    const created = await prisma.workout.create({
+      data: { name: body.name, description: body.description ?? null }
+    });
+    return new Response(JSON.stringify(created), { status: 201 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: e?.message || 'Bad Request' }), { status: 400 });
   }
 };

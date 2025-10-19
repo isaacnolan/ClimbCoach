@@ -1,119 +1,105 @@
 <script lang="ts">
-  import { createWorkout } from '$lib/data/workouts';
   import { createEventDispatcher } from 'svelte';
 
-  export let userId: string | undefined;
+  const dispatch = createEventDispatcher<{ workoutCreated: { workout: any } }>();
 
-  const dispatch = createEventDispatcher();
+  type ExerciseRow = {
+    name: string;
+    sets: number;
+    reps?: number | null;
+    duration?: number | null;
+    rest?: number | null;
+    orderIdx?: number | null;
+  };
 
-  let workoutName = '';
-  let workoutDescription = '';
-  let exercises = [{ name: '', sets: 3, reps: 8, duration: null, rest: 60 }];
-
-  let isSubmitting = false;
-  let formError = '';
+  let name = '';
+  let description: string | null = '';
+  let exercises: ExerciseRow[] = [
+    { name: '', sets: 3, reps: 8, duration: null, rest: 60, orderIdx: 1 }
+  ];
 
   function addExercise() {
-    exercises = [...exercises, { name: '', sets: 3, reps: 8, duration: null, rest: 60 }];
+    exercises = [
+      ...exercises,
+      { name: '', sets: 3, reps: 8, duration: null, rest: 60, orderIdx: (exercises.at(-1)?.orderIdx ?? 0) + 1 }
+    ];
   }
+  function removeExercise(i: number) { exercises = exercises.filter((_, idx) => idx !== i); }
 
-  function removeExercise(index: number) {
-    exercises = exercises.filter((_, i) => i !== index);
-  }
+  async function submit() {
+    if (!name.trim()) return alert('Workout name required');
 
-  async function handleSubmit() {
-    try {
-      isSubmitting = true;
-      formError = '';
-      await createWorkout({
-        userId,
-        name: workoutName,
-        description: workoutDescription,
-        exercises: exercises.map((ex) => ({
-          name: ex.name,
-          sets: ex.sets,
-          reps: ex.reps ?? undefined,
-          duration: ex.duration ?? undefined,
-          rest: ex.rest ?? undefined
-        })),
-      });
-      workoutName = '';
-      workoutDescription = '';
-      exercises = [{ name: '', sets: 3, reps: 8, duration: null, rest: 60 }];
-      dispatch('workoutCreated');
-    } catch (error) {
-      console.error('Error creating workout:', error);
-      formError = 'Failed to create workout. Please try again later.';
-    } finally {
-      isSubmitting = false;
+    const payload = {
+      name,
+      description: description || null,
+      exercises: exercises.map((e, i) => ({
+        name: e.name,
+        sets: Number(e.sets || 0),
+        reps: e.reps != null ? Number(e.reps) : null,
+        duration: e.duration != null ? Number(e.duration) : null,
+        rest: e.rest != null ? Number(e.rest) : null,
+        orderIdx: e.orderIdx != null ? Number(e.orderIdx) : i + 1
+      }))
+    };
+
+    const res = await fetch('/api/workouts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e?.error || 'Failed to create workout');
+      return;
     }
+    const created = await res.json();
+
+    // 🔔 IMPORTANT: emit the created workout so others (TrainingSessionForm) can auto-select it
+    dispatch('workoutCreated', { workout: created });
+
+    // reset form (keeps same UX as before)
+    name = '';
+    description = '';
+    exercises = [{ name: '', sets: 3, reps: 8, duration: null, rest: 60, orderIdx: 1 }];
   }
 </script>
 
-<form on:submit|preventDefault={handleSubmit} class="workout-form">
-  {#if formError}
-    <div class="error-message"><p>{formError}</p></div>
-  {/if}
+<div class="card">
+  <label>
+    <span>Workout Name</span>
+    <input placeholder="e.g., Hangboard Repeaters" bind:value={name} />
+  </label>
 
-  <div class="form-group">
-    <label for="workoutName">Workout Name</label>
-    <input id="workoutName" bind:value={workoutName} required placeholder="e.g., Hangboard Repeaters" />
+  <label>
+    <span>Description</span>
+      <textarea rows="3" placeholder="Optional description" bind:value={description}></textarea>
+  </label>
+
+  <h3>Exercises</h3>
+  {#each exercises as ex, i}
+    <div class="ex-row">
+      <input placeholder="Exercise Name" bind:value={ex.name} />
+      <input type="number" min="1" step="1" placeholder="Sets" bind:value={ex.sets} />
+      <input type="number" min="0" step="1" placeholder="Reps" bind:value={ex.reps} />
+      <input type="number" min="0" step="1" placeholder="Duration (sec)" bind:value={ex.duration} />
+      <input type="number" min="0" step="1" placeholder="Rest (sec)" bind:value={ex.rest} />
+      <button type="button" class="remove" on:click={() => removeExercise(i)}>✕</button>
+    </div>
+  {/each}
+  <button type="button" class="ghost" on:click={addExercise}>+ Add Exercise</button>
+
+  <div class="actions">
+    <button on:click={submit}>Add Workout</button>
   </div>
-
-  <div class="form-group">
-    <label for="workoutDescription">Description</label>
-    <textarea id="workoutDescription" bind:value={workoutDescription} placeholder="Optional description"></textarea>
-  </div>
-
-  <div class="exercises">
-    <h3>Exercises</h3>
-    {#each exercises as exercise, index}
-      <div class="exercise-card">
-        <button type="button" class="remove-btn" on:click={() => removeExercise(index)}>×</button>
-        <div class="form-group">
-          <label for={"exerciseName-" + index}>Exercise Name</label>
-          <input id={"exerciseName-" + index} bind:value={exercise.name} required />
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for={"sets-" + index}>Sets</label>
-            <input id={"sets-" + index} type="number" bind:value={exercise.sets} min="1" required />
-          </div>
-          <div class="form-group">
-            <label for={"reps-" + index}>Reps</label>
-            <input id={"reps-" + index} type="number" bind:value={exercise.reps} min="1" />
-          </div>
-          <div class="form-group">
-            <label for={"duration-" + index}>Duration (sec)</label>
-            <input id={"duration-" + index} type="number" bind:value={exercise.duration} min="1" />
-          </div>
-          <div class="form-group">
-            <label for={"rest-" + index}>Rest (sec)</label>
-            <input id={"rest-" + index} type="number" bind:value={exercise.rest} min="0" />
-          </div>
-        </div>
-      </div>
-    {/each}
-
-    <button type="button" class="add-exercise-btn" on:click={addExercise}>Add Exercise</button>
-  </div>
-
-  <button type="submit" class="submit-btn" disabled={isSubmitting}>
-    {isSubmitting ? 'Creating…' : 'Create Workout'}
-  </button>
-</form>
+</div>
 
 <style>
-  .workout-form { max-width: 800px; margin: 0 auto; padding: 2rem; }
-  .form-group { margin-bottom: 1rem; }
-  label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
-  input, textarea { width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem; }
-  textarea { min-height: 100px; resize: vertical; }
-  .exercises { margin: 2rem 0; }
-  .exercise-card { position: relative; background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem; }
-  .remove-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #666; }
-  .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-top: 1rem; }
-  .add-exercise-btn { background: #f5f5f5; border: none; padding: 0.8rem 1.5rem; border-radius: 4px; cursor: pointer; margin: 1rem 0; width: 100%; }
-  .submit-btn { background: #3498db; color: white; border: none; padding: 1rem 2rem; border-radius: 4px; cursor: pointer; font-size: 1.1rem; width: 100%; }
-  .submit-btn:hover { background: #2980b9; }
+  .card { background:white; padding:1.5rem; border-radius:12px; box-shadow:0 2px 4px rgba(0,0,0,.1); display:grid; gap:12px; }
+  label { display:grid; gap:6px; }
+  input, textarea { padding:.75rem; border:1px solid #cfd7df; border-radius:8px; }
+  .ex-row { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr auto; gap:8px; align-items:center; }
+  .ghost { background:transparent; border:1px dashed #cbd5e1; border-radius:10px; padding:8px 12px; }
+  .actions { display:flex; justify-content:flex-end; }
+  .actions button { background:#3498db; color:#fff; border:none; padding:.75rem 1.25rem; border-radius:8px; }
+  .remove { border:none; background:#f3f4f6; border-radius:8px; padding:6px 10px; cursor:pointer; }
 </style>

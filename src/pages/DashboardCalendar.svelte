@@ -1,303 +1,171 @@
 <script lang="ts">
-import { onMount } from 'svelte';
-import { getWorkouts } from '$lib/data/workouts';
+  import { onMount } from 'svelte';
 
-type WorkoutEvent = {
-  id: string;
-  date: string;
-  title: string;
-  description: string;
-};
+  const today = new Date();
+  let year = today.getFullYear();
+  let month = today.getMonth(); // 0-based
+  let days: Date[] = [];
 
-let events: WorkoutEvent[] = [];
-let year = 2025;
-let month = 8; // September (0-indexed)
-let daysInMonth = new Date(year, month + 1, 0).getDate();
-let firstDay = new Date(year, month, 1).getDay();
-let calendar: (number|null)[][] = [];
+  type LiteSession = { id: string; name: string; scheduledDate: string };
+  let sessionsByDay: Record<string, LiteSession[]> = {};
 
-let selectedEvent: WorkoutEvent | null = null;
-let showModal = false;
-let isLoading = true;
-let error: string | null = null;
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const monthStart = (y: number, m: number) => new Date(y, m, 1, 0, 0, 0);
+  const monthEnd = (y: number, m: number) => new Date(y, m + 1, 0, 23, 59, 59);
 
-onMount(async () => {
-  calendar = [];
-  let day = 1;
-  for (let i = 0; i < 6; i++) {
-    let week: (number|null)[] = [];
-    for (let j = 0; j < 7; j++) {
-      if ((i === 0 && j < firstDay) || day > daysInMonth) {
-        week.push(null);
-      } else {
-        week.push(day);
-        day++;
-      }
+  function buildGrid() {
+    const start = monthStart(year, month);
+    const end = monthEnd(year, month);
+
+    const firstGridDay = new Date(start);
+    firstGridDay.setDate(firstGridDay.getDate() - firstGridDay.getDay());
+
+    const lastGridDay = new Date(end);
+    lastGridDay.setDate(lastGridDay.getDate() + (6 - lastGridDay.getDay()));
+
+    const grid: Date[] = [];
+    const cur = new Date(firstGridDay);
+    while (cur <= lastGridDay) {
+      grid.push(new Date(cur));
+      cur.setDate(cur.getDate() + 1);
     }
-    calendar.push(week);
+    days = grid;
   }
 
-  try {
-    isLoading = true;
-    error = null;
-    const workouts = await getWorkouts();
-    // Map workouts to calendar events (use scheduledDate if available, else createdAt)
-    events = workouts
-  .filter((w: any) => w.scheduledDate || w.createdAt)
-    .map((w: any) => ({
-      id: w.id,
-      date: (w.scheduledDate ? w.scheduledDate : w.createdAt).slice(0, 10),
-      title: w.name,
-      description: w.description || '',
-      exercises: w.exercises || [],
-    }));
-  } catch (err) {
-    error = 'Failed to load workouts.';
-  } finally {
-    isLoading = false;
+  async function loadSessions() {
+    const from = monthStart(year, month);
+    const to = monthEnd(year, month);
+
+    const url = new URL('/api/training', window.location.origin);
+    url.searchParams.set('lite', '1');
+    url.searchParams.set('from', from.toISOString());
+    url.searchParams.set('to', to.toISOString());
+
+    try {
+      const res = await fetch(url.toString());
+      if (!res.ok) {
+        const fb = await fetch(
+          `/api/training?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(
+            to.toISOString()
+          )}`
+        );
+        if (!fb.ok) throw new Error('Failed to load training sessions');
+        const full = await fb.json();
+        indexSessions(full.map((s: any) => ({ id: s.id, name: s.name, scheduledDate: s.scheduledDate })));
+        return;
+      }
+      const lite: LiteSession[] = await res.json();
+      indexSessions(lite);
+    } catch (e) {
+      console.error('Calendar load error:', e);
+      sessionsByDay = {};
+    }
   }
-});
 
-function getEvent(day: number) {
-  const date = `${year}-09-${String(day).padStart(2, '0')}`;
-  return events.find(e => e.date.endsWith(date));
-}
+  function indexSessions(items: LiteSession[]) {
+    const map: Record<string, LiteSession[]> = {};
+    for (const s of items) {
+      const key = ymd(new Date(s.scheduledDate));
+      (map[key] ||= []).push(s);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => +new Date(a.scheduledDate) - +new Date(b.scheduledDate));
+    }
+    sessionsByDay = map;
+  }
 
-function handleEventClick(event) {
-  selectedEvent = event;
-  showModal = true;
-}
+  function prevMonth() {
+    month === 0 ? (month = 11, year -= 1) : (month -= 1);
+    buildGrid(); loadSessions();
+  }
+  function nextMonth() {
+    month === 11 ? (month = 0, year += 1) : (month += 1);
+    buildGrid(); loadSessions();
+  }
 
-function closeModal() {
-  showModal = false;
-  selectedEvent = null;
-}
+  onMount(() => { buildGrid(); loadSessions(); });
+
+  $: (year, month, buildGrid); // keep grid when the month/year changes
 </script>
 
-<style>
-.calendar-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  margin: 0 auto;
-}
-.calendar {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 1rem;
-  background: #f8fafc;
-  border-radius: 1rem;
-  padding: 2rem;
-  width: 100%;
-  max-width: 900px;
-  box-sizing: border-box;
-}
-.day {
-  background: #fff;
-  border-radius: 0.75rem;
-  min-height: 100px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-  position: relative;
-  padding: 0.75rem;
-}
-.day.event {
-  background: #e3f0ff;
-  border: 1px solid #3182ce;
-}
-.event-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #3182ce;
-  position: absolute;
-  top: 8px;
-  right: 8px;
-}
-.event-title {
-  color: #3182ce;
-  font-weight: 500;
-  margin-top: 0.5rem;
-  font-size: 0.95rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-.header {
-  text-align: center;
-  font-size: 2rem;
-  font-weight: bold;
-  color: #3182ce;
-  margin-bottom: 2rem;
-}
-.weekdays {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 1rem;
-  color: #94a3b8;
-  font-weight: 500;
-  font-size: 1.1rem;
-  max-width: 900px;
-  width: 100%;
-  box-sizing: border-box;
-}
-/* Modal styles improved */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(44,62,80,0.18);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-.modal {
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 320px;
-  max-width: 90vw;
-}
-.modal-content {
-  background: #fff;
-  border-radius: 1.25rem;
-  box-shadow: 0 8px 32px rgba(44,62,80,0.18);
-  padding: 2.5rem 2rem 2rem 2rem;
-  min-width: 320px;
-  max-width: 400px;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 1.2rem;
-}
-.modal-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #2c3e50;
-  margin-bottom: 0.5rem;
-}
-.modal-desc {
-  color: #444;
-  font-size: 1.05rem;
-  margin-bottom: 0.5rem;
-}
-.modal-date-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  font-size: 1rem;
-}
-.modal-date-label {
-  font-weight: 500;
-  color: #3182ce;
-}
-.modal-date-value {
-  color: #2c3e50;
-}
-.modal-close {
-  align-self: flex-end;
-  background: #3498db;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 0.6rem 1.2rem;
-  font-size: 1rem;
-  cursor: pointer;
-  margin-top: 0.5rem;
-  transition: background 0.2s;
-}
-.modal-close:hover {
-  background: #2980b9;
-}
-</style>
-
-<div class="calendar-container">
-  <div class="header">September 2025</div>
-  <div class="weekdays">
-    <div>Sun</div>
-    <div>Mon</div>
-    <div>Tue</div>
-    <div>Wed</div>
-    <div>Thu</div>
-    <div>Fri</div>
-    <div>Sat</div>
+<div class="cc-cal">
+  <div class="cc-cal__header">
+    <button class="cc-cal__nav" on:click={prevMonth} aria-label="Previous month">‹</button>
+    <h2 class="cc-cal__title">
+      {new Date(year, month).toLocaleString(undefined, { month: 'long', year: 'numeric' })}
+    </h2>
+    <button class="cc-cal__nav" on:click={nextMonth} aria-label="Next month">›</button>
   </div>
-  {#if isLoading}
-    <div class="loading">Loading workouts...</div>
-  {:else if error}
-    <div class="error-message">{error}</div>
-  {:else}
-    <div class="calendar">
-      {#each calendar as week}
-        {#each week as day}
-          {#if day}
-            <div class="day {getEvent(day) ? 'event' : ''}">
-              <span style="position: absolute; top: 8px; left: 10px; font-size: 0.95rem; color: #94a3b8; font-weight: 500;">{day}</span>
-              {#if getEvent(day)}
-                <div class="event-dot"></div>
-                <div style="margin-top: 1.7rem;"></div> <!-- Spacer between number and title -->
-                <div class="event-title" on:click={() => handleEventClick(getEvent(day))}>
-                  {getEvent(day).title}
-                </div>
-              {/if}
-            </div>
-          {:else}
-            <div class="day"></div>
-          {/if}
-        {/each}
-      {/each}
-    </div>
-  {/if}
 
-  {#if showModal && selectedEvent}
-    <div class="modal-overlay" on:click={closeModal}>
-      <div class="modal" on:click|stopPropagation>
-        <div class="modal-content">
-          <h2 class="modal-title">{selectedEvent.title}</h2>
-          {#if selectedEvent.description}
-            <p class="modal-desc">{selectedEvent.description}</p>
-          {/if}
-          <div class="modal-date-row">
-            <span class="modal-date-label">Date:</span>
-            <span class="modal-date-value">{selectedEvent.date}</span>
+  <div class="cc-cal__dow">
+    <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+  </div>
+
+  <div class="cc-cal__grid">
+    {#each days as d}
+      {@const key = ymd(d)}
+      <div class="cc-cal__cell {d.getMonth() !== month ? 'is-muted' : ''} {key === ymd(today) ? 'is-today' : ''}">
+        <div class="cc-cal__date">{d.getDate()}</div>
+
+        {#if sessionsByDay[key]}
+          <div class="cc-cal__events">
+            {#each sessionsByDay[key].slice(0, 2) as ev}
+              <a class="cc-cal__event" href={`/training/${ev.id}`} title={ev.name}>
+                <span class="cc-cal__dot" aria-hidden="true"></span>
+                <span class="cc-cal__name">{ev.name}</span>
+              </a>
+            {/each}
+            {#if sessionsByDay[key].length > 2}
+              <div class="cc-cal__more">+{sessionsByDay[key].length - 2} more</div>
+            {/if}
           </div>
-          {#if selectedEvent.exercises && selectedEvent.exercises.length > 0}
-            <div>
-              <h3 style="margin: 0.5rem 0 0.2rem 0; font-size: 1.1rem; color: #3182ce;">Exercises</h3>
-              <ul style="padding-left: 1.2rem;">
-                {#each selectedEvent.exercises as ex}
-                  <li style="margin-bottom: 0.5rem;">
-                    <strong>{ex.name}</strong>
-                    {#if ex.sets}
-                      <span> — {ex.sets} sets</span>
-                    {/if}
-                    {#if ex.reps}
-                      <span>, {ex.reps} reps</span>
-                    {/if}
-                    {#if ex.duration}
-                      <span>, {ex.duration}s</span>
-                    {/if}
-                    {#if ex.rest}
-                      <span>, rest: {ex.rest}s</span>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
-          <button class="modal-close" on:click={closeModal}>Close</button>
-        </div>
+        {/if}
       </div>
-    </div>
-  {/if}
+    {/each}
+  </div>
 </div>
+
+<style>
+  /* Namespaced everything with cc-cal__* so nothing global can collide */
+
+  .cc-cal { margin: 0 auto; max-width: 980px; }
+
+  .cc-cal__header {
+    display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:14px;
+  }
+  .cc-cal__title { font-size: 2.25rem; color:#2563eb; font-weight:800; margin:0; }
+  .cc-cal__nav { background:#eef2ff; border:none; border-radius:10px; padding:.4rem .7rem; cursor:pointer; }
+
+  .cc-cal__dow {
+    display:grid; grid-template-columns: repeat(7, 1fr);
+    color:#94a3b8; font-weight:600; margin-bottom:8px;
+  }
+
+  .cc-cal__grid {
+    display:grid; grid-template-columns: repeat(7, 1fr);
+    gap:14px;
+  }
+
+  .cc-cal__cell {
+    position:relative;
+    padding:10px;
+    aspect-ratio: 1 / 1;        /* ← keeps perfect squares */
+    background:#f8fafc;
+    border-radius:14px;
+    box-shadow: inset 0 0 0 1px #eef2f7;
+    overflow: hidden;
+  }
+  .cc-cal__cell.is-today { box-shadow: inset 0 0 0 2px #60a5fa; }
+  .cc-cal__cell.is-muted { opacity:.55; }
+
+  .cc-cal__date { color:#64748b; font-weight:700; }
+
+  .cc-cal__events { margin-top:6px; display:flex; flex-direction:column; gap:4px; }
+  .cc-cal__event {
+    display:flex; align-items:center; gap:6px; text-decoration:none;
+    font-size:.85rem; color:#1e3a8a; overflow:hidden;
+  }
+  .cc-cal__name { white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
+  .cc-cal__dot { width:7px; height:7px; border-radius:50%; background:#1e90ff; display:inline-block; }
+  .cc-cal__more { margin-top:2px; font-size:.8rem; color:#475569; }
+</style>
