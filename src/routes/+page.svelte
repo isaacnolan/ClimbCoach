@@ -5,6 +5,7 @@
   import PerformanceAnalyzer from '$lib/components/PerformanceAnalyzer.svelte';
   import DashboardCalendar from '../pages/DashboardCalendar.svelte';
   import ProgressChart from '../pages/ProgressChart.svelte';
+  import ChatBot from '$lib/components/ChatBot.svelte';
   
 
   // NEW:
@@ -227,6 +228,7 @@
     {:else if currentTab === 'analyzer'}
       <section class="analyzer-section">
         <PerformanceAnalyzer />
+        <ChatBot />
       </section>
 
     {:else}
