@@ -1,14 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { chatMessages, addMessage, clearMessages } from '$lib/stores/chat';
 
-  let messages: { sender: 'user' | 'bot', text: string }[] = [];
   let input = '';
   let isLoading = false;
+  let messages: { sender: 'user' | 'bot', text: string }[] = [];
+
+  // Subscribe to the store
+  chatMessages.subscribe(value => {
+    messages = value;
+  });
 
   async function sendMessage() {
     if (!input.trim()) return;
     const userMessage = input;
-    messages = [...messages, { sender: 'user', text: userMessage }];
+    addMessage({ sender: 'user', text: userMessage });
     input = '';
     isLoading = true;
 
@@ -46,13 +52,13 @@
       }
       
       console.log('Adding message with text:', data.reply); // Debug log
-      messages = [...messages, { 
+      addMessage({ 
         sender: 'bot', 
         text: data.reply 
-      }];
+      });
     } catch (err) {
       console.error('Chat error:', err);
-      messages = [...messages, { sender: 'bot', text: 'Sorry something went wrong!' }];
+      addMessage({ sender: 'bot', text: 'Sorry something went wrong!' });
     } finally {
       isLoading = false;
     }
@@ -83,6 +89,9 @@
       on:keypress={handleKeyPress}
     />
     <button on:click={sendMessage}>Send</button>
+    {#if messages.length > 0}
+      <button class="clear-button" on:click={() => clearMessages()}>Clear Chat</button>
+    {/if}
   </div>
 </div>
 
@@ -150,5 +159,14 @@
 
   button:hover {
     background: #2980b9;
+  }
+
+  .clear-button {
+    background: #e74c3c;
+    margin-left: 0.5rem;
+  }
+
+  .clear-button:hover {
+    background: #c0392b;
   }
 </style>
