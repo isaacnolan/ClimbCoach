@@ -5,7 +5,9 @@ export const GET: RequestHandler = async ({ url }) => {
   const lite = url.searchParams.get('lite') === '1';
   const data = await prisma.workout.findMany({
     orderBy: { createdAt: 'desc' },
-    select: lite ? { id: true, name: true, description: true } : undefined
+    include: lite ? undefined : {
+      exercises: true
+    }
   });
   return new Response(JSON.stringify(data), { status: 200 });
 };
@@ -35,13 +37,15 @@ export const POST: RequestHandler = async ({ request }) => {
         description: body.description ?? undefined,
         userId: body.userId ?? null, // optional
         scheduledDate: scheduledDate,
-        exercises: (body.exercises ?? []).map((e: any) => ({
-          name: e.name,
-          sets: Number(e.sets) || 0,
-          reps: e.reps ?? undefined,
-          duration: e.duration ?? undefined,
-          rest: e.rest ?? undefined,
-        })),
+        exercises: {
+          create: (body.exercises ?? []).map((e: any) => ({
+            name: e.name,
+            sets: Number(e.sets) || 0,
+            reps: e.reps ?? undefined,
+            duration: e.duration ?? undefined,
+            rest: e.rest ?? undefined,
+          })),
+        },
       },
     });
     return new Response(JSON.stringify(created), { status: 201 });

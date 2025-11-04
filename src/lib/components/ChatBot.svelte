@@ -13,13 +13,43 @@
     isLoading = true;
 
     try {
-      const res = await fetch('/api/chat', {
+      console.log('Sending message:', userMessage); // Debug log
+      
+      const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage })
+        body: JSON.stringify({ 
+          message: userMessage,
+          performance: {
+            message: userMessage
+          }
+        })
       });
-      const data = await res.json();
-      messages = [...messages, { sender: 'bot', text: data.reply || 'No response.' }];
+      
+      console.log('Response status:', res.status); // Debug log
+      
+      const text = await res.text();
+      console.log('Raw response:', text); // Debug log
+      
+      const data = text ? JSON.parse(text) : null;
+      console.log('Parsed data:', data); // Debug log
+      
+      if (!res.ok || data?.error) {
+        const errorMsg = data?.error || data?.detail || 'Server error';
+        console.error('Error:', errorMsg);
+        throw new Error(typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg);
+      }
+      
+      if (!data?.reply) {
+        console.error('No reply in response:', data);
+        throw new Error('No response received from the server');
+      }
+      
+      console.log('Adding message with text:', data.reply); // Debug log
+      messages = [...messages, { 
+        sender: 'bot', 
+        text: data.reply 
+      }];
     } catch (err) {
       console.error('Chat error:', err);
       messages = [...messages, { sender: 'bot', text: 'Sorry something went wrong!' }];

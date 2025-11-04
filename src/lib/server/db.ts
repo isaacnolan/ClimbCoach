@@ -30,7 +30,15 @@ export async function createWorkout(data: {
         description: data.description,
         userId: data.userId ?? null,
         scheduledDate: data.scheduledDate,
-        exercises: { create: data.exercises },
+        exercises: {
+          create: data.exercises.map(e => ({
+            name: e.name,
+            sets: Number(e.sets) || 0,
+            reps: e.reps ?? null,
+            duration: e.duration ?? null,
+            rest: e.rest ?? null,
+          })),
+        },
       },
       include: { exercises: true },
     });
