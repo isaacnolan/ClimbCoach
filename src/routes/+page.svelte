@@ -2,11 +2,8 @@
   import { onMount } from 'svelte';
   import { getWorkouts } from '$lib/data/workouts';
   import WorkoutForm from '$lib/components/WorkoutForm.svelte';
-  import PerformanceAnalyzer from '$lib/components/PerformanceAnalyzer.svelte';
   import DashboardCalendar from '../pages/DashboardCalendar.svelte';
   import ProgressChart from '../pages/ProgressChart.svelte';
-  import ChatBot from '$lib/components/ChatBot.svelte';
-  
 
   // NEW:
   import { getTrainingSessions } from '$lib/data/trainingSessions';
@@ -45,7 +42,7 @@
   };
 
   // add 'training'
-  let currentTab: 'dashboard' | 'workouts' | 'training' | 'progress' | 'analyzer' = 'dashboard';
+  let currentTab: 'dashboard' | 'workouts' | 'training' | 'progress' = 'dashboard';
 
   // workouts state (existing)
   let workouts: Workout[] = [];
@@ -122,7 +119,6 @@
     <button class:active={currentTab === 'workouts'} on:click={(e) => handleTabClick('workouts', e)}>Workouts</button>
     <button class:active={currentTab === 'training'} on:click={(e) => handleTabClick('training', e)}>Training Sessions</button>
     <button class:active={currentTab === 'progress'} on:click={(e) => handleTabClick('progress', e)}>Progress</button>
-    <button class:active={currentTab === 'analyzer'} on:click={(e) => handleTabClick('analyzer', e)}>Performance Analyzer</button>
   </nav>
 
   <main>
@@ -225,13 +221,7 @@
         {/if}
       </section>
 
-    {:else if currentTab === 'analyzer'}
-      <section class="analyzer-section">
-        <PerformanceAnalyzer />
-        <ChatBot />
-      </section>
-
-    {:else}
+    {:else if currentTab === 'progress'}
       <section class="progress">
         <h2>Your Progress</h2>
         <ProgressChart />
@@ -267,7 +257,6 @@
   .loading { text-align: center; padding: 2rem; font-size: 1.2rem; color: #666; }
   .empty-state { text-align: center; padding: 2rem; background: #f8f9fa; border-radius: 8px; margin: 2rem 0; border: 1px dashed #ddd; }
   .empty-action { margin-top: 0.5rem; color: #666; font-size: 0.9rem; }
-  .analyzer-section { max-width: 1200px; margin: 0 auto; padding: 2rem; }
   button { background: #3498db; color: white; border: none; padding: 0.8rem 1.5rem; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
   button:hover { background: #2980b9; }
 </style>

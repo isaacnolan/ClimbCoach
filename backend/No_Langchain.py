@@ -159,6 +159,101 @@ class ClimbingCoachSystem:
     
     
     
+    def create_training_session_in_db(self, session_request: str) -> str:
+        """Create and save training session to database"""
+        try:
+            # Use Claude to parse the training session request
+            parse_response = self.client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=1024,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Parse this training session request into JSON format. Follow these requirements exactly:
+
+1. REQUIRED: Convert V-grades to numbers (V0=0, V1=1, V2=2, etc)
+2. REQUIRED: workoutId must be a valid ID from lookup_workouts
+3. REQUIRED: dates must be in ISO 8601 format
+4. REQUIRED: grade must be a number, not a string
+5. REQUIRED: style must be exactly "boulder", "sport", or "trad"
+6. REQUIRED: status must be exactly "sent", "attempt", or "project"
+
+Example request: "Create a session called Evening Projecting for Nov 5 2025, link to workout ID abc123. Climbed: warmed up on V2, sent after 2 attempts. Then worked V4 project for 5 attempts."
+
+Example response:
+{{
+    "name": "Evening Projecting",
+    "description": "Bouldering session with warmup and project work",
+    "scheduledDate": "2025-11-05T00:00:00.000Z",
+    "workoutId": "abc123",
+    "climbs": [
+        {{
+            "name": "Warmup Problem",
+            "grade": 2,
+            "style": "boulder",
+            "status": "sent",
+            "attempts": 2,
+            "notes": "Warmup climb"
+        }},
+        {{
+            "name": "Project Problem",
+            "grade": 4,
+            "style": "boulder",
+            "status": "project",
+            "attempts": 5,
+            "notes": "Working on sequences"
+        }}
+    ]
+}}
+
+Today is October 10, 2025. Convert any mentioned dates to ISO 8601 format.
+
+Parse this training session request into the same format:
+Request: {session_request}
+
+Return ONLY valid JSON, no other text."""
+                }]
+            )
+            
+            session_json_str = parse_response.content[0].text.strip()
+            
+            # Clean up response
+            if session_json_str.startswith("```json"):
+                session_json_str = session_json_str[7:]
+            if session_json_str.startswith("```"):
+                session_json_str = session_json_str[3:]
+            if session_json_str.endswith("```"):
+                session_json_str = session_json_str[:-3]
+            session_json_str = session_json_str.strip()
+            
+            session_data = json.loads(session_json_str)
+            
+            # POST to API
+            response = requests.post(
+                f"{self.api_base_url}/api/training",
+                json=session_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 201:
+                created_session = response.json()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Training session '{created_session['name']}' created successfully!",
+                    "session": created_session
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "success": False,
+                    "error": response.json().get("error", "Failed to create training session"),
+                    "status_code": response.status_code
+                }, indent=2)
+                
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Error creating training session: {str(e)}"
+            }, indent=2)
+
     def create_workout_in_db(self, workout_request: str) -> str:
         """Create and save workout to database"""
         try:
@@ -237,6 +332,15 @@ class ClimbingCoachSystem:
         """Define Claude tool specifications"""
         return [
             {
+                "name": "lookup_workouts",
+                "description": "Get a list of all available workouts from the database. Use this to find workout IDs when creating training sessions.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
                 "name": "search_exercises",
                 "description": "Search for specific exercises from a comprehensive database of 2900+ exercises. Use this to find exercises for specific body parts, equipment, or training goals.",
                 "input_schema": {
@@ -268,15 +372,33 @@ class ClimbingCoachSystem:
                     },
                     "required": ["workout_request"]
                 }
+            },
+            {
+                "name": "create_training_session",
+                "description": "Create and save a training session to the database. Use when user wants to CREATE and SAVE a training session with climbs and optionally link to a workout.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "session_request": {
+                            "type": "string",
+                            "description": "Full description of the training session including name, scheduled date, climbs completed (with grades, style, and attempts), and optionally a workout ID to link. Example: 'Create a training session called Evening Bouldering for October 15, 2025 where I sent two V4s after 3 attempts each and projected a V6 with 5 attempts'"
+                        }
+                    },
+                    "required": ["session_request"]
+                }
             }
         ]
     
     def process_tool_call(self, tool_name: str, tool_input: Dict) -> str:
         """Process tool calls and return results"""
-        if tool_name == "search_exercises":
+        if tool_name == "lookup_workouts":
+            return self.lookup_past_workouts()
+        elif tool_name == "search_exercises":
             return self.search_exercises(tool_input["query"], tool_input.get("limit", 8))
         elif tool_name == "create_workout":
             return self.create_workout_in_db(tool_input["workout_request"])
+        elif tool_name == "create_training_session":
+            return self.create_training_session_in_db(tool_input["session_request"])
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     
@@ -286,10 +408,18 @@ class ClimbingCoachSystem:
         system_prompt = """You are an expert climbing coach with access to comprehensive datasets and specialized tools. 
 
 Your available tools:
+- lookup_workouts: Get a list of all available workouts from the database (use this BEFORE creating training sessions)
 - search_exercises: Find exercises from 2900+ exercise database
 - create_workout: Create and save workouts to the database
+- create_training_session: Create and save training sessions with climbs and link to existing workouts
 
-When a user asks you to create or save a workout, use the create_workout tool with the full workout description.
+When a user asks to create a training session:
+1. ALWAYS use lookup_workouts first to find an appropriate existing workout to link
+2. Then use create_training_session with a valid workoutId from the lookup results
+
+When a user asks to:
+- Create or save a workout: use create_workout tool
+- Log climbs or create a training session: use lookup_workouts THEN create_training_session
 
 Provide comprehensive, data-driven coaching advice based on the tools and data available."""
         
@@ -345,6 +475,34 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
         """Print statistics about loaded datasets"""
         print("\n=== Dataset Statistics ===")
         print(f"Exercise database: {len(self.exercise_db)} exercises")
+    
+    def lookup_past_workouts(self) -> str:
+        """Get list of available workouts from the database"""
+        try:
+            # GET request to workouts API
+            response = requests.get(
+                f"{self.api_base_url}/api/workouts",
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                workouts = response.json()
+                return json.dumps({
+                    "success": True,
+                    "workouts": workouts
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "success": False,
+                    "error": "Failed to fetch workouts",
+                    "status_code": response.status_code
+                }, indent=2)
+                
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Error fetching workouts: {str(e)}"
+            }, indent=2)
 
 
 # Usage example
