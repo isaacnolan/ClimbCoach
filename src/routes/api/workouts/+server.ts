@@ -2,14 +2,37 @@ import type { RequestHandler } from './$types';
 import { prisma } from '$lib/server/db';
 
 export const GET: RequestHandler = async ({ url }) => {
-  const lite = url.searchParams.get('lite') === '1';
-  const data = await prisma.workout.findMany({
-    orderBy: { createdAt: 'desc' },
-    include: lite ? undefined : {
-      exercises: true
+  try {
+    const lite = url.searchParams.get('lite') === '1';
+    const data = await prisma.workout.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: lite ? undefined : {
+        exercises: true
+      }
+    });
+    return new Response(JSON.stringify(data), { status: 200 });
+  } catch (e: any) {
+    console.error('Database connection error:', e);
+    
+    // Check for specific Prisma errors
+    if (e.message?.includes("Can't reach database server")) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Database connection failed. Please check your database configuration.',
+          details: process.env.NODE_ENV === 'development' ? e.message : undefined
+        }), 
+        { status: 503 }
+      );
     }
-  });
-  return new Response(JSON.stringify(data), { status: 200 });
+    
+    return new Response(
+      JSON.stringify({ 
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? e.message : undefined
+      }), 
+      { status: 500 }
+    );
+  }
 };
 
 export const POST: RequestHandler = async ({ request }) => {

@@ -12,6 +12,8 @@ load_dotenv()
 class ClimbingCoachSystem:
     def __init__(self, kaggle_gym_path, kaggle_climb_path, google_sheets_url, api_base_url: str = "http://localhost:5173"):
         self.client = anthropic.Anthropic()
+        # Allow overriding Claude model via env var; default to a supported model
+        self.claude_model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
         self.kaggle_gym_path = kaggle_gym_path
         self.kaggle_climb_path = kaggle_climb_path
         self.google_sheets_url = google_sheets_url
@@ -164,7 +166,7 @@ class ClimbingCoachSystem:
         try:
             # Use Claude to parse the training session request
             parse_response = self.client.messages.create(
-                model="claude-sonnet-4-5",
+                model=self.claude_model,
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
@@ -259,7 +261,7 @@ Return ONLY valid JSON, no other text."""
         try:
             # Use Claude to parse the workout request
             parse_response = self.client.messages.create(
-                model="claude-sonnet-4-5",
+                model=self.claude_model,
                 max_tokens=1024,
                 messages=[{
                     "role": "user",
@@ -342,13 +344,26 @@ Return ONLY valid JSON, no other text."""
             },
             {
                 "name": "search_exercises",
-                "description": "Search for specific exercises from a comprehensive database of 2900+ exercises. Use this to find exercises for specific body parts, equipment, or training goals.",
+                "description": """Search for specific exercises from a database of climbing-relevant exercises. Each exercise has these fields:
+- name (Title): The name of the exercise
+- description (Desc): Detailed description of the exercise
+- bodypart: Target muscle group (forearms, shoulders, back, core, abs, lats, biceps, chest, triceps)
+- equipment: Required equipment for the exercise
+- level: Difficulty level of the exercise
+- type: Type of exercise
+- rating: User rating score
+
+The search matches these fields against your query terms. Relevant keywords include:
+- Body parts: forearms, shoulders, back, core, abs, lats, biceps, chest, triceps
+- Common equipment: hangboard, campus board, rings, weights
+- Exercise types: strength, endurance, power
+- Training goals: finger strength, power endurance, technique""",
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search query describing the type of exercise needed (e.g., 'finger strength', 'shoulder mobility', 'core exercises')"
+                            "description": "Search query using relevant keywords like body parts (forearms, core), equipment (hangboard), or training goals (finger strength)"
                         },
                         "limit": {
                             "type": "integer",
@@ -427,7 +442,7 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
         
         for iteration in range(max_iterations):
             response = self.client.messages.create(
-                model="claude-sonnet-4-5",
+                model=self.claude_model,
                 max_tokens=4096,
                 system=system_prompt,
                 tools=self.get_tools(),
@@ -515,14 +530,27 @@ if __name__ == "__main__":
     
     coach.analyze_dataset_stats()
     
-    # Example queries
-    queries = [
-        "Create a workout called 'V5 Power Training' scheduled for October 15, 2025 with campus board ladders: 4 sets of 6 rungs with 3 minute rest, and hangboard repeaters: 6 sets of 7 seconds with 3 seconds off"    ]
+    # Print example exercises from the database
+    print("\n=== Exercise Database Sample ===")
+    for i, exercise in enumerate(coach.exercise_db[:10]):  # Print first 10 exercises
+        print(f"\nExercise {i+1}:")
+        for key, value in exercise.items():
+            print(f"{key}: {value}")
     
-    for query in queries:
-        print(f"\n{'='*70}")
-        print(f"Query: {query}")
-        print('='*70)
-        response = coach.create_training_plan(query)
-        print(response)
-        print('='*70)
+    print("\n=== Example Search Results ===")
+    # Try some example searches
+    search_queries = [
+        "forearm strength training",
+        "hangboard finger exercises",
+        "core workout for climbing",
+        "shoulder mobility exercises"
+    ]
+    
+    for query in search_queries:
+        print(f"\nSearch query: {query}")
+        print("-" * 50)
+        results = json.loads(coach.search_exercises(query, limit=3))
+        for result in results:
+            print(f"\nName: {result.get('name', 'N/A')}")
+            print(f"Body Part: {result.get('bodypart', 'N/A')}")
+            print(f"Description: {result.get('description', 'N/A')[:100]}...")
