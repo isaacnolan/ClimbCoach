@@ -1,87 +1,102 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { getWorkouts } from '$lib/data/workouts';
-let workouts = [];
-let chartData = [];
-let chartLabels = [];
-let isLoading = true;
-let error: string | null = null;
+import { getTrainingSessions } from '$lib/data/trainingSessions';
+import { computeSessionLoads, computeACWR } from '$lib/load';
+import ChartSVG from '$lib/components/ChartSVG.svelte';
+import ACWRChart from '$lib/components/ACWRChart.svelte';
+import SessionClimbs from '$lib/components/SessionClimbs.svelte';
 
-onMount(async () => {
+let isLoading = true;
+let isLoadingSessions = false;
+let error: string | null = null;
+let sessionsError: string | null = null;
+
+// Training load state
+let sessionLoads: { scheduledDate: string; name: string; load: number }[] = [];
+let acwrResult: { ewma7: number | null; ewma42: number | null; acwr: number | null } | null = null;
+let acwrSeries: { ewma7Series?: number[]; ewma42Series?: number[] } | null = null;
+let gMaxOverride: number | '' = '';
+let weights = { boulder: 1.0, sport: 0.75, other: 0.8 };
+let timeWeighted = false;
+let expandedSessionId: number | null = null; // use index to expand per-session climbs
+
+function formatDate(iso?: string) {
+  if (!iso) return '';
   try {
-    isLoading = true;
-    error = null;
-    workouts = await getWorkouts();
-    console.log(workouts);
-    // Example: Use workout scheduledDate or createdAt for x-axis, and grade from name (e.g. V5, V6, 5.12a) for y-axis
-    chartData = workouts.map((w: any) => {
-      // Extract grade from name (simple regex for V-grade or YDS)
-      const match = w.name.match(/(V\d+|5\.\d+[abcd]?)/);
-      return match ? match[0] : null;
-    });
-    chartLabels = workouts.map((w: any) => (w.scheduledDate ? w.scheduledDate.slice(0, 10) : w.createdAt.slice(0, 10)));
+    const d = new Date(iso);
+    return d.toLocaleDateString();
+  } catch (e) {
+    return iso;
+  }
+}
+
+async function loadAndCompute() {
+  try {
+    isLoadingSessions = true;
+    sessionsError = null;
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - 180);
+    const data = await getTrainingSessions({ from: from.toISOString(), to: to.toISOString() });
+
+    const gMax = gMaxOverride === '' ? undefined : Number(gMaxOverride);
+    const { sessions, gMax: inferred } = computeSessionLoads(data || [], gMax, weights);
+    sessionLoads = sessions;
+    const acwr = computeACWR(sessions.map(s => ({ scheduledDate: s.scheduledDate, load: s.load })), { timeWeighted });
+    acwrResult = { ewma7: acwr.ewma7 ?? null, ewma42: acwr.ewma42 ?? null, acwr: acwr.acwr ?? null };
+    acwrSeries = { ewma7Series: acwr.ewma7Series, ewma42Series: acwr.ewma42Series };
   } catch (err) {
-    error = 'Failed to load progress data.';
+    console.error('Failed to load sessions', err);
+    sessionsError = 'Failed to load training sessions';
   } finally {
+    isLoadingSessions = false;
     isLoading = false;
   }
+}
+
+onMount(() => {
+  loadAndCompute();
 });
 
-function gradeToNumber(grade: string | null): number {
-  if (!grade) return 0;
-  if (grade.startsWith('V')) return parseInt(grade.slice(1));
-  if (grade.startsWith('5.')) {
-    // Convert YDS to a number (e.g. 5.10a -> 10, 5.12d -> 12)
-    const num = parseInt(grade.slice(2));
-    return isNaN(num) ? 0 : num;
-  }
-  return 0;
+$: if (gMaxOverride !== '') {
+  loadAndCompute();
+}
+
+$: if (weights || timeWeighted) {
+  loadAndCompute();
 }
 </script>
 
 {#if isLoading}
   <div>Loading progress chart...</div>
-{:else if error}
-  <div class="error-message">{error}</div>
 {:else}
   <div class="progress-chart">
-    <h3>Max Grade Over Time</h3>
-    <div class="svg-wrapper">
-      <svg width="100%" height="220" viewBox="0 0 420 220">
-        {#if chartData.length > 1}
-          {#each chartData as grade, i}
-            {#if i > 0}
-              <line
-                x1={(i - 1) * (400 / (chartData.length - 1)) + 10}
-                y1={200 - gradeToNumber(chartData[i - 1]) * 15}
-                x2={i * (400 / (chartData.length - 1)) + 10}
-                y2={200 - gradeToNumber(grade) * 15}
-                stroke="#3182ce"
-                stroke-width="2"
-              />
-            {/if}
-          {/each}
-          {#each chartData as grade, i}
-            <circle
-              cx={i * (400 / (chartData.length - 1)) + 10}
-              cy={200 - gradeToNumber(grade) * 15}
-              r="5"
-              fill="#3182ce"
-            />
-            <text
-              x={i * (400 / (chartData.length - 1)) + 10}
-              y="215"
-              font-size="12"
-              fill="#666"
-              text-anchor="middle"
-              transform={`rotate(-45,${i * (400 / (chartData.length - 1)) + 10},215)`}
-            >{chartLabels[i]}</text>
-          {/each}
+    <h2>Training Load & Progress</h2>
+
+    {#if isLoadingSessions}
+      <div>Loading sessions...</div>
+    {:else}
+      {#if sessionsError}
+        <div class="error">{sessionsError}</div>
+      {:else}
+        {#if sessionLoads.length === 0}
+          <div>No training sessions found.</div>
         {:else}
-          <text x="20" y="100" fill="#888">Not enough data to show chart</text>
+          <div>
+            {#if sessionLoads.length > 0 && acwrSeries}
+              <div style="margin-top:1rem">
+                <ChartSVG {sessionLoads} {acwrSeries} />
+              </div>
+              <div style="margin-top:0.75rem">
+                <ACWRChart {sessionLoads} {acwrSeries} />
+              </div>
+            {:else}
+              <div>Not enough data to show charts.</div>
+            {/if}
+          </div>
         {/if}
-      </svg>
-    </div>
+      {/if}
+    {/if}
   </div>
 {/if}
 
@@ -93,13 +108,18 @@ function gradeToNumber(grade: string | null): number {
   padding: 2rem;
   margin-bottom: 2rem;
   min-width: 350px;
-  max-width: 700px;
+  max-width: 980px;
   margin-left: auto;
   margin-right: auto;
 }
-.svg-wrapper {
+
+input, select, textarea {
   width: 100%;
-  overflow-x: auto;
-  padding-bottom: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
 }
+
+.error { color: #e74c3c; }
 </style>

@@ -18,31 +18,25 @@
     try {
       isLoading = true;
       error = null;
-
-      const response = await fetch('/api/analyze', {
+      const res = await fetch('/api/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: 'user-1', // TODO: Replace with actual user ID
-          performance
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'user-1', performance })
       });
-
-      const data = await response.json();
-
-      if (data.success) {
-        analysis = data.analysis;
-      } else {
-        error = data.error;
-      }
-    } catch (err) {
-      console.error('Error analyzing performance:', err);
+      const data = await res.json();
+      if (data.success) analysis = data.analysis;
+      else error = data.error || 'Analysis failed';
+    } catch (e) {
+      console.error(e);
       error = 'Failed to analyze performance';
     } finally {
       isLoading = false;
     }
+  }
+
+  function formatDate(iso?: string) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
   }
 </script>
 
@@ -88,9 +82,7 @@
   </button>
 
   {#if error}
-    <div class="error">
-      {error}
-    </div>
+    <div class="error">{error}</div>
   {/if}
 
   {#if analysis}
@@ -127,82 +119,12 @@
 </div>
 
 <style>
-  .analyzer {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem;
-  }
-
-  .form-group {
-    margin-bottom: 1rem;
-  }
-
-  label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-  }
-
-  input, select, textarea {
-    width: 100%;
-    padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 1rem;
-  }
-
-  textarea {
-    min-height: 100px;
-    resize: vertical;
-  }
-
-  button {
-    background: #3498db;
-    color: white;
-    border: none;
-    padding: 0.8rem 1.5rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 1rem;
-    width: 100%;
-  }
-
-  button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-  }
-
-  .error {
-    color: #e74c3c;
-    padding: 1rem;
-    background: #fee;
-    border-radius: 4px;
-    margin: 1rem 0;
-  }
-
-  .analysis {
-    margin-top: 2rem;
-    padding: 1rem;
-    background: #f8f9fa;
-    border-radius: 4px;
-  }
-
-  .analysis h3 {
-    margin-top: 1.5rem;
-    color: #2c3e50;
-  }
-
-  .analysis ul {
-    list-style-type: none;
-    padding: 0;
-  }
-
-  .analysis li {
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #eee;
-  }
-
-  .analysis li:last-child {
-    border-bottom: none;
-  }
-</style> 
+  .analyzer { max-width: 800px; margin: 0 auto; padding: 2rem; }
+  .form-group { margin-bottom: 1rem; }
+  label { display:block; margin-bottom:0.5rem; font-weight:500; }
+  input, select, textarea { width:100%; padding:0.5rem; border:1px solid #ddd; border-radius:4px }
+  textarea { min-height:100px }
+  button { background:#3498db; color:white; border:none; padding:0.8rem 1.5rem; border-radius:4px; cursor:pointer }
+  .error { color:#e74c3c; padding:0.75rem; background:#fff6f6; border-radius:6px; margin-top:1rem }
+  .analysis { margin-top:1.25rem; background:#f8f9fa; padding:1rem; border-radius:6px }
+</style>
