@@ -523,7 +523,7 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
 # Usage example
 if __name__ == "__main__":
     coach = ClimbingCoachSystem(
-        kaggle_gym_path="gym_exercise_data.csv",
+        kaggle_gym_path="data/gym_data.csv",
         kaggle_climb_path="climb_dataset.csv",
         google_sheets_url="https://docs.google.com/spreadsheets/d/1J6d45EqIlIsIqNdi2X-Zl-EGFxf9d9T3R_W55xrpEAs/export?format=csv&gid=1650492946"
     )
