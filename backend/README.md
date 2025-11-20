@@ -51,7 +51,7 @@ Troubleshooting
 - To export your current environment packages for reproducibility:
 
 ```bash
-pip freeze > exported_requirements.txt
+pip freeze > requirements.txt
 ```
 
 Contact
