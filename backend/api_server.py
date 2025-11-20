@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from No_Langchain import ClimbingCoachSystem
+from backend.ClimbCoach import ClimbingCoachSystem
 import os
 
 app = FastAPI()
