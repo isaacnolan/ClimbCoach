@@ -81,9 +81,10 @@ class ClimbingCoachSystem:
                 try:
                     bodypart = str(row.get('BodyPart', '')).lower()
                     if any(bp in bodypart for bp in climbing_relevant_bodyparts):
+                        desc = str(row.get('Desc', ''))
                         exercises.append({
                             'name': row.get('Title', 'Unknown'),
-                            'description': row.get('Desc', ''),
+                            'description': desc[:300] if len(desc) > 300 else desc,
                             'bodypart': row.get('BodyPart', ''),
                             'equipment': row.get('Equipment', ''),
                             'level': row.get('Level', ''),
@@ -96,7 +97,14 @@ class ClimbingCoachSystem:
         if self.sheets_data is not None:
             for _, row in self.sheets_data.iterrows():
                 try:
-                    exercise = {col: row[col] for col in self.sheets_data.columns if pd.notna(row[col])}
+                    exercise = {}
+                    for col in self.sheets_data.columns:
+                        if pd.notna(row[col]):
+                            val = str(row[col])
+                            # Truncate long text fields
+                            if len(val) > 300:
+                                val = val[:300]
+                            exercise[col] = val
                     if exercise:
                         exercises.append(exercise)
                 except:
@@ -137,7 +145,7 @@ class ClimbingCoachSystem:
     
     
     
-    def search_exercises(self, query: str, limit: int = 8) -> str:
+    def search_exercises(self, query: str, limit: int = 4) -> str:
         """Search for exercises based on query"""
         query_lower = query.lower()
         results = []
@@ -155,93 +163,48 @@ class ClimbingCoachSystem:
                 results.append((score, exercise))
         
         results.sort(reverse=True, key=lambda x: x[0])
-        top_results = [ex for _, ex in results[:limit]]
-        
+        top_results = []
+        for _, ex in results[:limit]:
+            # Create truncated version
+            truncated = {
+                'name': ex.get('name', 'Unknown'),
+                'bodypart': ex.get('bodypart', ''),
+                'equipment': ex.get('equipment', ''),
+                'level': ex.get('level', ''),
+                # Truncate description to 150 chars
+                'description': (ex.get('description', '')[:150] + '...') if len(ex.get('description', '')) > 150 else ex.get('description', '')
+            }
+            top_results.append(truncated)
+    
         return json.dumps(top_results, indent=2)
     
     
     
-    def create_training_session_in_db(self, session_request: str) -> str:
-        """Create and save training session to database"""
+    def create_training_session_in_db(self, session_data: dict) -> str:
+        """Create and save training session to database - accepts pre-parsed JSON"""
         try:
-            # Use Claude to parse the training session request
-            parse_response = self.client.messages.create(
-                model=self.claude_model,
-                max_tokens=1024,
-                messages=[{
-                    "role": "user",
-                    "content": f"""Parse this training session request into JSON format. Follow these requirements exactly:
-
-1. REQUIRED: Convert V-grades to numbers (V0=0, V1=1, V2=2, etc)
-2. REQUIRED: workoutId must be a valid ID from lookup_workouts
-3. REQUIRED: dates must be in ISO 8601 format
-4. REQUIRED: grade must be a number, not a string
-5. REQUIRED: style must be exactly "boulder", "sport", or "trad"
-6. REQUIRED: status must be exactly "sent", "attempt", or "project"
-
-Example request: "Create a session called Evening Projecting for Nov 5 2025, link to workout ID abc123. Climbed: warmed up on V2, sent after 2 attempts. Then worked V4 project for 5 attempts."
-
-Example response:
-{{
-    "name": "Evening Projecting",
-    "description": "Bouldering session with warmup and project work",
-    "scheduledDate": "2025-11-05T00:00:00.000Z",
-    "workoutId": "abc123",
-    "climbs": [
-        {{
-            "name": "Warmup Problem",
-            "grade": 2,
-            "style": "boulder",
-            "status": "sent",
-            "attempts": 2,
-            "notes": "Warmup climb"
-        }},
-        {{
-            "name": "Project Problem",
-            "grade": 4,
-            "style": "boulder",
-            "status": "project",
-            "attempts": 5,
-            "notes": "Working on sequences"
-        }}
-    ]
-}}
-
-Today is October 10, 2025. Convert any mentioned dates to ISO 8601 format.
-
-Parse this training session request into the same format:
-Request: {session_request}
-
-Return ONLY valid JSON, no other text."""
-                }]
-            )
-            
-            session_json_str = parse_response.content[0].text.strip()
-            
-            # Clean up response
-            if session_json_str.startswith("```json"):
-                session_json_str = session_json_str[7:]
-            if session_json_str.startswith("```"):
-                session_json_str = session_json_str[3:]
-            if session_json_str.endswith("```"):
-                session_json_str = session_json_str[:-3]
-            session_json_str = session_json_str.strip()
-            
-            session_data = json.loads(session_json_str)
-            
-            # POST to API
+            # Validate required fields
+            required_fields = ['name', 'scheduledDate']
+            missing_fields = [f for f in required_fields if f not in session_data]
+            if missing_fields:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing_fields)}"
+                }, indent=2)
+        
+            # POST to API directly - NO nested Claude call
             response = requests.post(
                 f"{self.api_base_url}/api/training",
                 json=session_data,
                 headers={"Content-Type": "application/json"}
             )
-            
+        
             if response.status_code == 201:
                 created_session = response.json()
                 return json.dumps({
                     "success": True,
                     "message": f"Training session '{created_session['name']}' created successfully!",
-                    "session": created_session
+                    "sessionId": created_session.get('id')
                 }, indent=2)
             else:
                 return json.dumps({
@@ -249,7 +212,7 @@ Return ONLY valid JSON, no other text."""
                     "error": response.json().get("error", "Failed to create training session"),
                     "status_code": response.status_code
                 }, indent=2)
-                
+            
         except Exception as e:
             return json.dumps({
                 "success": False,
@@ -394,14 +357,44 @@ The search matches these fields against your query terms. Relevant keywords incl
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "session_request": {
-                            "type": "string",
-                            "description": "Full description of the training session including name, scheduled date, climbs completed (with grades, style, and attempts), and optionally a workout ID to link. Example: 'Create a training session called Evening Bouldering for October 15, 2025 where I sent two V4s after 3 attempts each and projected a V6 with 5 attempts'"
-                        }
-                    },
-                    "required": ["session_request"]
-                }
+                        "session_data": {
+                            "type": "object",
+                            "description": """JSON object with training session details:
+{
+  "name": "session name",
+  "description": "brief description",
+  "scheduledDate": "2025-12-01T00:00:00.000Z",
+  "workoutId": "valid-workout-id-or-null",
+  "climbs": []
+}
+
+For climbs (if any):
+{
+  "name": "climb name",
+  "grade": 2,
+  "style": "boulder",
+  "status": "sent",
+  "attempts": 3,
+  "notes": "optional"
+}
+
+IMPORTANT:
+- Convert V-grades to numbers (V0=0, V1=1, V2=2, etc)
+- Date must be ISO 8601 format
+- Today is December 2, 2025""",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "scheduledDate": {"type": "string"},
+                    "workoutId": {"type": ["string", "null"]},
+                    "climbs": {"type": "array"}
+                },
+                "required": ["name", "scheduledDate"]
             }
+        },
+        "required": ["session_data"]
+    }
+}
         ]
     
     def process_tool_call(self, tool_name: str, tool_input: Dict) -> str:
@@ -413,7 +406,7 @@ The search matches these fields against your query terms. Relevant keywords incl
         elif tool_name == "create_workout":
             return self.create_workout_in_db(tool_input["workout_request"])
         elif tool_name == "create_training_session":
-            return self.create_training_session_in_db(tool_input["session_request"])
+            return self.create_training_session_in_db(tool_input["session_data"])
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     
@@ -443,7 +436,7 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
         for iteration in range(max_iterations):
             response = self.client.messages.create(
                 model=self.claude_model,
-                max_tokens=4096,
+                max_tokens=2048,
                 system=system_prompt,
                 tools=self.get_tools(),
                 messages=messages
@@ -502,9 +495,26 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
             
             if response.status_code == 200:
                 workouts = response.json()
+                # Simplify workouts to reduce token usage
+                simplified_workouts = []
+                for w in workouts[:15]:  # Limit to 15
+                    exercise_names = []
+                    if 'exercises' in w and w['exercises']:
+                        exercise_names = [ex.get('name', 'Exercise') for ex in w['exercises'][:5]]
+                        if len(w['exercises']) > 5:
+                            exercise_names.append(f"...+{len(w['exercises']) - 5} more")
+                
+                    simplified_workouts.append({
+                        'id': w.get('id'),
+                        'name': w.get('name', 'Unnamed')[:50],
+                        'date': w.get('scheduledDate', '')[:10] if w.get('scheduledDate') else None,
+                        'exercises': ', '.join(exercise_names) if exercise_names else 'No exercises'
+                    })
+            
                 return json.dumps({
                     "success": True,
-                    "workouts": workouts
+                    "total": len(workouts),
+                    "workouts": simplified_workouts
                 }, indent=2)
             else:
                 return json.dumps({
