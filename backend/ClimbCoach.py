@@ -26,7 +26,7 @@ class ClimbingCoachSystem:
         
         # Create indexed knowledge bases
         self.exercise_db = self._build_exercise_db()
-    
+
     def load_google_sheets_data(self, url):
         """Load data from Google Sheets CSV export"""
         try:
@@ -293,9 +293,82 @@ class ClimbingCoachSystem:
                 "error": f"Error creating workout: {str(e)}"
             }, indent=2)
     
+    def get_training_load(self) -> str:
+        """Get current training load metrics for the user"""
+        try:
+            # Fetch training load from API
+            response = requests.get(
+                f"{self.api_base_url}/api/training-load",
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code != 200:
+                return json.dumps({
+                    "success": False,
+                    "message": "Failed to fetch training load data from API"
+                }, indent=2)
+            
+            data = response.json()
+            
+            if not data.get('success') or not data.get('trainingLoad'):
+                return json.dumps({
+                    "success": False,
+                    "message": "No training load data available. User may not have any training sessions logged yet."
+                }, indent=2)
+            
+            tl = data['trainingLoad']
+            
+            # Interpret ACWR
+            acwr = tl.get('currentACWR')
+            interpretation = "Unknown"
+            recommendation = "Unable to provide recommendation without ACWR data."
+            
+            if acwr is not None:
+                if acwr < 0.8:
+                    interpretation = "Undertraining"
+                    recommendation = "Consider gradually increasing training volume. You have capacity for more work."
+                elif 0.8 <= acwr <= 1.5:
+                    interpretation = "Optimal"
+                    recommendation = "Your training load is well-balanced. Continue progressive training."
+                else:
+                    interpretation = "Overtraining Risk"
+                    recommendation = "CAUTION: High injury risk. Reduce volume, focus on recovery, consider a deload week."
+            
+            return json.dumps({
+                "success": True,
+                "training_load": {
+                    "acwr": acwr,
+                    "acwr_interpretation": interpretation,
+                    "acwr_recommendation": recommendation,
+                    "acute_load_7day": tl.get('acuteLoad'),
+                    "chronic_load_42day": tl.get('chronicLoad'),
+                    "max_grade_climbed": f"V{tl.get('maxGrade')}" if tl.get('maxGrade') is not None else "N/A",
+                    "recent_sessions_7days": tl.get('recentSessionCount', 0),
+                    "average_session_load": round(tl.get('averageSessionLoad', 0), 2),
+                    "total_load": round(tl.get('totalLoad', 0), 2),
+                    "recent_sessions": tl.get('recentSessions', [])
+                },
+                "optimal_range": "ACWR between 0.8-1.5 is optimal for progressive training without excessive injury risk"
+            }, indent=2)
+            
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "error": f"Error fetching training load: {str(e)}"
+            }, indent=2)
+    
     def get_tools(self) -> List[BetaToolUnionParam]:
         """Define Claude tool specifications"""
         return [
+            {
+                "name": "get_training_load",
+                "description": "Get the user's current training load metrics including ACWR (Acute:Chronic Workload Ratio), recent session data, and personalized recommendations. Use this when creating workouts or training plans to ensure proper load management and injury prevention.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
             {
                 "name": "lookup_workouts",
                 "description": "Get a list of all available workouts from the database. Use this to find workout IDs when creating training sessions.",
@@ -399,7 +472,9 @@ IMPORTANT:
     
     def process_tool_call(self, tool_name: str, tool_input: Dict) -> str:
         """Process tool calls and return results"""
-        if tool_name == "lookup_workouts":
+        if tool_name == "get_training_load":
+            return self.get_training_load()
+        elif tool_name == "lookup_workouts":
             return self.lookup_past_workouts()
         elif tool_name == "search_exercises":
             return self.search_exercises(tool_input["query"], tool_input.get("limit", 8))
@@ -410,24 +485,35 @@ IMPORTANT:
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     
-    def create_training_plan(self, user_query: str, max_iterations: int = 6) -> str:
+    def create_training_plan(self, user_query: str, max_iterations: int = 6, context: dict = None) -> str:
         """Main interface for creating training plans using Claude tool calling"""
+        
+        # Store training load data if provided
+        if context and "training_load" in context:
+            self.training_load_data = context["training_load"]
         
         system_prompt = """You are an expert climbing coach with access to comprehensive datasets and specialized tools. 
 
 Your available tools:
+- get_training_load: Get user's current training load metrics and ACWR - USE THIS when creating workouts/plans
 - lookup_workouts: Get a list of all available workouts from the database (use this BEFORE creating training sessions)
 - search_exercises: Find exercises from 2900+ exercise database
 - create_workout: Create and save workouts to the database
 - create_training_session: Create and save training sessions with climbs and link to existing workouts
 
 When a user asks to create a training session:
-1. ALWAYS use lookup_workouts first to find an appropriate existing workout to link
-2. Then use create_training_session with a valid workoutId from the lookup results
+1. Use get_training_load FIRST to check their current load and ACWR
+2. Use lookup_workouts to find an appropriate existing workout to link
+3. Use create_training_session with a valid workoutId from the lookup results
+4. Adjust volume/intensity based on their ACWR to prevent overtraining
 
-When a user asks to:
-- Create or save a workout: use create_workout tool
-- Log climbs or create a training session: use lookup_workouts THEN create_training_session
+When a user asks to create or save a workout:
+1. Use get_training_load FIRST to check their current load and ACWR
+2. Use create_workout tool, adjusting volume/intensity based on their training load
+
+When a user asks to log climbs:
+1. Use lookup_workouts first to find an appropriate workout
+2. Then use create_training_session
 
 Provide comprehensive, data-driven coaching advice based on the tools and data available."""
         
