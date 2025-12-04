@@ -22,25 +22,19 @@ class ClimbingCoachSystem:
         # Load and store data
         self.gym_data = self.load_kaggle_gym_data(kaggle_gym_path)
         self.climb_data = self.load_kaggle_climb_data(kaggle_climb_path)
-        self.sheets_data = self.load_google_sheets_data(google_sheets_url)
+        self.sheets_data = self.load_google_gym_data(google_sheets_url)
         
         # Create indexed knowledge bases
         self.exercise_db = self._build_exercise_db()
     
-    def load_google_sheets_data(self, url):
-        """Load data from Google Sheets CSV export"""
+    def load_google_gym_data(self, file_path):
+        """Load Google gym exercise dataset"""
         try:
-            if '/edit' in url:
-                csv_url = url.replace('/edit#gid=', '/export?format=csv&gid=')
-                csv_url = csv_url.replace('/edit?gid=', '/export?format=csv&gid=')
-            else:
-                csv_url = url
-            
-            df = pd.read_csv(csv_url)
-            print(f"Loaded Google Sheets data: {df.shape[0]} rows, {df.shape[1]} columns")
+            df = pd.read_csv(file_path)
+            print(f"Loaded Google gym data: {df.shape[0]} rows, {df.shape[1]} columns")
             return df
         except Exception as e:
-            print(f"Error loading Google Sheets data: {e}")
+            print(f"Error loading Google gym data: {e}")
             return None
     
     def load_kaggle_gym_data(self, file_path):
@@ -401,6 +395,17 @@ The search matches these fields against your query terms. Relevant keywords incl
                     },
                     "required": ["session_request"]
                 }
+            },
+            {
+                "name": "lookup_google_sheet",
+                "description": "Pull data from the self reported training sessions",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"]
+                }
             }
         ]
     
@@ -414,6 +419,8 @@ The search matches these fields against your query terms. Relevant keywords incl
             return self.create_workout_in_db(tool_input["workout_request"])
         elif tool_name == "create_training_session":
             return self.create_training_session_in_db(tool_input["session_request"])
+        elif tool_name == "lookup_google_sheet":
+            return self.lookup_google_sheet(tool_input["query"])
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     
@@ -470,7 +477,11 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
                         print(f"Input: {json.dumps(block.input, indent=2)}")
                         
                         result = self.process_tool_call(block.name, block.input)
-                        print(f"Result preview: {result[:200]}...")
+                         # Handle result preview safely
+                        if isinstance(result, str):
+                            print(f"Result preview: {result[:200]}...")
+                        else:
+                            print(f"Result preview: {str(result)[:200]}...")
                         
                         tool_results.append({
                             "type": "tool_result",
@@ -486,38 +497,105 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
         
         return "Maximum iterations reached. Please try rephrasing your question."
     
-    def analyze_dataset_stats(self):
-        """Print statistics about loaded datasets"""
-        print("\n=== Dataset Statistics ===")
-        print(f"Exercise database: {len(self.exercise_db)} exercises")
-    
-    def lookup_past_workouts(self) -> str:
-        """Get list of available workouts from the database"""
-        try:
-            # GET request to workouts API
-            response = requests.get(
-                f"{self.api_base_url}/api/workouts",
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 200:
-                workouts = response.json()
-                return json.dumps({
-                    "success": True,
-                    "workouts": workouts
-                }, indent=2)
-            else:
-                return json.dumps({
-                    "success": False,
-                    "error": "Failed to fetch workouts",
-                    "status_code": response.status_code
-                }, indent=2)
-                
-        except Exception as e:
+    def lookup_google_sheet(self, query: str):
+        """Lookup data from Google Sheets with better error handling"""
+        if self.sheets_data is None:
+            return json.dumps({"error": "Google Sheets data not loaded"})
+
+        q = query.strip().lower()
+        df = self.sheets_data
+
+        # ----------------------------
+        # 1. Detect row numbers
+        # ----------------------------
+        import re
+
+        row_match = re.search(r"row\s+(\d+)|(\d+)(?:rd|th|st|nd)\s+row", q)
+        row_index = None
+        if row_match:
+            row_num = row_match.group(1) or row_match.group(2)
+            row_index = int(row_num) - 1  # convert to 0-based index
+            if row_index < 0 or row_index >= len(df):
+                return json.dumps({"error": f"Row {row_num} is out of range. Dataset has {len(df)} rows."})
+
+        # ----------------------------
+        # 2. Detect column by substring matching
+        # ----------------------------
+        matched_cols = [col for col in df.columns if col.lower() in q]
+
+        # If they said a column name directly, try fuzzy search too
+        if not matched_cols:
+            for col in df.columns:
+                for word in q.split():
+                    if word in col.lower():
+                        matched_cols.append(col)
+                        break
+
+        # ----------------------------
+        # CASE A: Row + Column
+        # ----------------------------
+        if row_index is not None and matched_cols:
+            row = df.iloc[row_index]
+            result = {col: str(row[col]) if pd.notna(row[col]) else None for col in matched_cols}
             return json.dumps({
-                "success": False,
-                "error": f"Error fetching workouts: {str(e)}"
+                "row": row_index + 1,
+                "columns": result
             }, indent=2)
+
+        # ----------------------------
+        # CASE B: Only row requested
+        # ----------------------------
+        if row_index is not None and not matched_cols:
+            row = df.iloc[row_index]
+            row_dict = {col: str(row[col]) if pd.notna(row[col]) else None for col in df.columns}
+            return json.dumps({
+                "row": row_index + 1,
+                "values": row_dict
+            }, indent=2)
+
+        # ----------------------------
+        # CASE C: Only column(s) requested
+        # ----------------------------
+        if matched_cols:
+            output = {}
+            for col in matched_cols:
+                series = df[col].dropna()
+
+                # numeric stats if possible
+                try:
+                    numeric_series = series.astype(float)
+                    stats = {
+                        "count": int(numeric_series.count()),
+                        "min": float(numeric_series.min()),
+                        "max": float(numeric_series.max()),
+                        "mean": float(numeric_series.mean())
+                    }
+                except:
+                    stats = "non-numeric"
+
+                output[col] = {
+                    "sample_values": [str(v) for v in series.head(15).tolist()],
+                    "stats": stats
+                }
+
+            return json.dumps({"matches": output}, indent=2)
+
+        # ----------------------------
+        # CASE D: No column match, no row match
+        # ----------------------------
+        return json.dumps({
+            "error": f"Could not interpret query '{query}'.",
+            "hints": [
+                "Try referencing a column name",
+                "Try asking about a specific row number",
+                "Examples:",
+                "'height of row 3'",
+                "'show row 10'",
+                "'weight'"
+            ],
+            "available_columns": list(df.columns)
+        }, indent=2)
+
 
 
 # Usage example
@@ -525,7 +603,7 @@ if __name__ == "__main__":
     coach = ClimbingCoachSystem(
         kaggle_gym_path="gym_exercise_data.csv",
         kaggle_climb_path="climb_dataset.csv",
-        google_sheets_url="https://docs.google.com/spreadsheets/d/1J6d45EqIlIsIqNdi2X-Zl-EGFxf9d9T3R_W55xrpEAs/export?format=csv&gid=1650492946"
+        google_sheets_url="climbData/google_sheets.csv"
     )
     
     coach.analyze_dataset_stats()

@@ -19,7 +19,7 @@ app.add_middleware(
 coach = ClimbingCoachSystem(
     kaggle_gym_path=os.getenv("KAGGLE_GYM_PATH", "data/gym_data.csv"),
     kaggle_climb_path=os.getenv("KAGGLE_CLIMB_PATH", "data/climb_data.csv"),
-    google_sheets_url=os.getenv("GOOGLE_SHEETS_URL", ""),
+    google_sheets_url=os.getenv("GOOGLE_SHEETS_URL", "backend/climbData/google_sheets.csv"),
     api_base_url="http://localhost:5173"
 )
 
