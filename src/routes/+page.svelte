@@ -8,6 +8,8 @@
   // NEW:
   import { getTrainingSessions } from '$lib/data/trainingSessions';
   import TrainingSessionForm from '$lib/components/TrainingSessionForm.svelte';
+  import SessionQualityDashboard from '../pages/SessionQualityDashboard.svelte';
+
 
   // No filtering so everything shows
   const USER_ID: string | undefined = undefined;
@@ -42,7 +44,8 @@
   };
 
   // add 'training'
-  let currentTab: 'dashboard' | 'workouts' | 'training' | 'progress' = 'dashboard';
+  let currentTab: 'dashboard' | 'workouts' | 'training' | 'progress' | 'sessionQuality' = 'dashboard';
+
 
   // workouts state (existing)
   let workouts: Workout[] = [];
@@ -119,6 +122,8 @@
     <button class:active={currentTab === 'workouts'} on:click={(e) => handleTabClick('workouts', e)}>Workouts</button>
     <button class:active={currentTab === 'training'} on:click={(e) => handleTabClick('training', e)}>Training Sessions</button>
     <button class:active={currentTab === 'progress'} on:click={(e) => handleTabClick('progress', e)}>Progress</button>
+    <button class:active={currentTab === 'sessionQuality'} on:click={(e) => handleTabClick('sessionQuality', e)}>Session Quality</button>
+
   </nav>
 
   <main>
@@ -231,6 +236,14 @@
           <div class="stat"><h3>Workouts</h3><p>{workouts.length}</p></div>
         </div>
       </section>
+
+
+    {:else if currentTab === 'sessionQuality'}
+      <section class="progress">
+        <h2>Session Quality</h2>
+        <SessionQualityDashboard />
+      </section>
+
     {/if}
   </main>
 </div>
