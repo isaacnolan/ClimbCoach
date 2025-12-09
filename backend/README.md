@@ -18,7 +18,7 @@ source .venv/bin/activate
 
 ```bash
 pip install --upgrade pip setuptools wheel
-pip install -r ../exported_requirements.txt
+pip install -r ../requirements.txt
 ```
 
 Environment variables
