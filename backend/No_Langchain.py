@@ -397,14 +397,53 @@ The search matches these fields against your query terms. Relevant keywords incl
                 }
             },
             {
-                "name": "lookup_google_sheet",
-                "description": "Pull data from the self reported training sessions",
+                "name": "find_similar_climbers",
+                "description": """Find climbers with similar physical traits and climbing ability from the training database. 
+                
+    ONLY use this tool when the user mentions their own physical characteristics or climbing level. Examples of when to use:
+    - "I'm 5'10\" and climb V5"
+    - "I weigh 165 lbs and my max grade is 5.12a"
+    - "I'm a beginner climber, 6 feet tall"
+    - "I climb V8 and I'm 150 pounds"
+
+    DO NOT use this tool for:
+    - General training advice without user stats
+    - Creating workouts or sessions
+    - Looking up exercise information
+
+    This tool helps personalize training recommendations by finding climbers with similar profiles.""",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"}
+                        "user_profile": {
+                            "type": "object",
+                            "description": "User's physical and climbing characteristics",
+                            "properties": {
+                                "height": {
+                                    "type": "number",
+                                    "description": "Height in inches or cm (specify unit)"
+                                },
+                                "weight": {
+                                    "type": "number",
+                                    "description": "Weight in pounds or kg (specify unit)"
+                                },
+                                "climbing_grade": {
+                                    "type": "string",
+                                    "description": "Current climbing grade (e.g., V5, 5.12a, 7a)"
+                                },
+                                "experience_level": {
+                                    "type": "string",
+                                    "description": "Beginner, Intermediate, Advanced, or Elite"
+                                }
+                            }
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of similar climbers to return (default: 5)",
+                            "default": 5
+                        }
                     },
-                    "required": ["query"]
+                    "required": ["user_profile"]
                 }
             }
         ]
@@ -419,8 +458,8 @@ The search matches these fields against your query terms. Relevant keywords incl
             return self.create_workout_in_db(tool_input["workout_request"])
         elif tool_name == "create_training_session":
             return self.create_training_session_in_db(tool_input["session_request"])
-        elif tool_name == "lookup_google_sheet":
-            return self.lookup_google_sheet(tool_input["query"])
+        elif tool_name == "find_similar_climbers":
+            return self.find_similar_climbers(tool_input["user_profile"], tool_input.get("limit", 5))
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     
@@ -434,6 +473,25 @@ Your available tools:
 - search_exercises: Find exercises from 2900+ exercise database
 - create_workout: Create and save workouts to the database
 - create_training_session: Create and save training sessions with climbs and link to existing workouts
+- find_similar_climbers: Find climbers with similar physical traits and ability (ONLY use when user shares their stats)
+
+IMPORTANT - When to use find_similar_climbers:
+ USE when user mentions their physical characteristics:
+  - Height (e.g., "I'm 5'10\"", "I'm 180cm tall")
+  - Weight (e.g., "I weigh 165 lbs", "I'm 75kg")
+  - Climbing grade (e.g., "I climb V5", "my max is 5.12a")
+  - Experience level (e.g., "I'm a beginner", "I'm intermediate")
+
+ DO NOT USE for:
+  - General training questions without user stats
+  - Creating workouts or logging sessions
+  - Exercise searches
+
+Workflow when user shares their stats:
+1. Use find_similar_climbers to get profiles of similar climbers
+2. Analyze what training approaches worked for them
+3. Use search_exercises to find appropriate exercises
+4. Provide personalized recommendations based on similar climbers' success
 
 When a user asks to create a training session:
 1. ALWAYS use lookup_workouts first to find an appropriate existing workout to link
@@ -497,103 +555,81 @@ Provide comprehensive, data-driven coaching advice based on the tools and data a
         
         return "Maximum iterations reached. Please try rephrasing your question."
     
-    def lookup_google_sheet(self, query: str):
-        """Lookup data from Google Sheets with better error handling"""
+    def find_similar_climbers(self, user_profile: Dict, limit: int = 5) -> str:
+        """Find climbers with similar physical traits and climbing ability"""
         if self.sheets_data is None:
-            return json.dumps({"error": "Google Sheets data not loaded"})
-
-        q = query.strip().lower()
-        df = self.sheets_data
-
-        # ----------------------------
-        # 1. Detect row numbers
-        # ----------------------------
-        import re
-
-        row_match = re.search(r"row\s+(\d+)|(\d+)(?:rd|th|st|nd)\s+row", q)
-        row_index = None
-        if row_match:
-            row_num = row_match.group(1) or row_match.group(2)
-            row_index = int(row_num) - 1  # convert to 0-based index
-            if row_index < 0 or row_index >= len(df):
-                return json.dumps({"error": f"Row {row_num} is out of range. Dataset has {len(df)} rows."})
-
-        # ----------------------------
-        # 2. Detect column by substring matching
-        # ----------------------------
-        matched_cols = [col for col in df.columns if col.lower() in q]
-
-        # If they said a column name directly, try fuzzy search too
-        if not matched_cols:
+            return json.dumps({"error": "Training data not loaded"})
+        
+        df = self.sheets_data.copy()
+        
+        # Extract user characteristics
+        user_height = user_profile.get('height')
+        user_weight = user_profile.get('weight')
+        user_grade = user_profile.get('climbing_grade')
+        user_level = user_profile.get('experience_level')
+        
+        # Calculate similarity scores
+        df['similarity_score'] = 0.0
+        
+        # Height matching (if column exists)
+        height_cols = [col for col in df.columns if 'height' in col.lower()]
+        if user_height and height_cols:
+            height_col = height_cols[0]
+            df['height_numeric'] = pd.to_numeric(df[height_col], errors='coerce')
+            df['height_diff'] = abs(df['height_numeric'] - user_height)
+            # Normalize: smaller difference = higher score (0-1 scale)
+            max_diff = df['height_diff'].max()
+            if max_diff > 0:
+                df['height_score'] = 1 - (df['height_diff'] / max_diff)
+                df['similarity_score'] += df['height_score'] * 0.3  # 30% weight
+        
+        # Weight matching (if column exists)
+        weight_cols = [col for col in df.columns if 'weight' in col.lower()]
+        if user_weight and weight_cols:
+            weight_col = weight_cols[0]
+            df['weight_numeric'] = pd.to_numeric(df[weight_col], errors='coerce')
+            df['weight_diff'] = abs(df['weight_numeric'] - user_weight)
+            max_diff = df['weight_diff'].max()
+            if max_diff > 0:
+                df['weight_score'] = 1 - (df['weight_diff'] / max_diff)
+                df['similarity_score'] += df['weight_score'] * 0.3  # 30% weight
+        
+        # Grade matching (if column exists)
+        grade_cols = [col for col in df.columns if 'grade' in col.lower() or 'level' in col.lower()]
+        if user_grade and grade_cols:
+            grade_col = grade_cols[0]
+            # Simple string matching for now
+            df['grade_match'] = df[grade_col].astype(str).str.contains(user_grade, case=False, na=False)
+            df['similarity_score'] += df['grade_match'].astype(float) * 0.4  # 40% weight
+        
+        # Remove rows with no similarity
+        df = df[df['similarity_score'] > 0].copy()
+        
+        # Sort by similarity and get top matches
+        df = df.sort_values('similarity_score', ascending=False).head(limit)
+        
+        # Build results
+        results = []
+        for _, row in df.iterrows():
+            climber = {
+                "similarity_score": float(row['similarity_score']),
+                "profile": {}
+            }
+            
+            # Include relevant columns
+            relevant_cols = ['height', 'weight', 'grade', 'level', 'experience', 'age']
             for col in df.columns:
-                for word in q.split():
-                    if word in col.lower():
-                        matched_cols.append(col)
-                        break
-
-        # ----------------------------
-        # CASE A: Row + Column
-        # ----------------------------
-        if row_index is not None and matched_cols:
-            row = df.iloc[row_index]
-            result = {col: str(row[col]) if pd.notna(row[col]) else None for col in matched_cols}
-            return json.dumps({
-                "row": row_index + 1,
-                "columns": result
-            }, indent=2)
-
-        # ----------------------------
-        # CASE B: Only row requested
-        # ----------------------------
-        if row_index is not None and not matched_cols:
-            row = df.iloc[row_index]
-            row_dict = {col: str(row[col]) if pd.notna(row[col]) else None for col in df.columns}
-            return json.dumps({
-                "row": row_index + 1,
-                "values": row_dict
-            }, indent=2)
-
-        # ----------------------------
-        # CASE C: Only column(s) requested
-        # ----------------------------
-        if matched_cols:
-            output = {}
-            for col in matched_cols:
-                series = df[col].dropna()
-
-                # numeric stats if possible
-                try:
-                    numeric_series = series.astype(float)
-                    stats = {
-                        "count": int(numeric_series.count()),
-                        "min": float(numeric_series.min()),
-                        "max": float(numeric_series.max()),
-                        "mean": float(numeric_series.mean())
-                    }
-                except:
-                    stats = "non-numeric"
-
-                output[col] = {
-                    "sample_values": [str(v) for v in series.head(15).tolist()],
-                    "stats": stats
-                }
-
-            return json.dumps({"matches": output}, indent=2)
-
-        # ----------------------------
-        # CASE D: No column match, no row match
-        # ----------------------------
+                if any(term in col.lower() for term in relevant_cols):
+                    if pd.notna(row[col]):
+                        climber['profile'][col] = str(row[col])
+            
+            results.append(climber)
+        
         return json.dumps({
-            "error": f"Could not interpret query '{query}'.",
-            "hints": [
-                "Try referencing a column name",
-                "Try asking about a specific row number",
-                "Examples:",
-                "'height of row 3'",
-                "'show row 10'",
-                "'weight'"
-            ],
-            "available_columns": list(df.columns)
+            "user_profile": user_profile,
+            "similar_climbers": results,
+            "count": len(results),
+            "message": f"Found {len(results)} climbers with similar characteristics"
         }, indent=2)
 
 
